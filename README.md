@@ -1,1 +1,0 @@
-# Web-QA-Offline-Document-Comparison-Tool
