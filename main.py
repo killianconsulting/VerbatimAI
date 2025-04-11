@@ -14,11 +14,18 @@ import webbrowser
 def get_document_url_pairs(docx_files):
     match_window = tk.Toplevel()
     match_window.title("Match DOCX Files to URLs")
-    window_width = 1200
-    window_height = 600
-    match_window.geometry(f"{window_width}x{window_height}")
+    window_width = 1200  # Adjusted for full field sizes
+    window_height = 400  # Reduced height only
+    
+    # Calculate screen center
+    screen_width = match_window.winfo_screenwidth()
+    screen_height = match_window.winfo_screenheight()
+    x = (screen_width - window_width) // 2
+    y = (screen_height - window_height) // 2
+    match_window.geometry(f"{window_width}x{window_height}+{x}+{y}")
+    
     entries = []
-    canvas = tk.Canvas(match_window, width=window_width)
+    canvas = tk.Canvas(match_window)
     scrollbar = tk.Scrollbar(match_window, orient="vertical", command=canvas.yview)
     scroll_frame = tk.Frame(canvas)
 
@@ -30,8 +37,8 @@ def get_document_url_pairs(docx_files):
     for file in docx_files:
         frame = tk.Frame(scroll_frame)
         frame.pack(fill="x", padx=10, pady=5)
-        tk.Label(frame, text=file, width=40, anchor="w").pack(side="left")
-        url_entry = tk.Entry(frame, width=100)
+        tk.Label(frame, text=file, width=80, anchor="w").pack(side="left")  # Back to original width
+        url_entry = tk.Entry(frame, width=100)  # Back to original width
         url_entry.pack(side="left", padx=5, fill="x", expand=True)
         entries.append((file, url_entry))
 
@@ -375,33 +382,88 @@ def block_compare(draft, live, similarity_threshold=0.9):
     return aligned, similarity
 
 def format_result_as_html(docx_file, url, title, meta_desc, similarity, results):
-    report = f"<h2>{docx_file} vs <a href='{url}'>{url}</a></h2>"
+    # Add title and color key
+    report = """
+    <div style='margin-bottom: 30px;'>
+        <h1 style='font-family: Roboto, Arial, sans-serif; font-size: 32px; font-weight: bold; margin: 0 0 20px 0;'>VerbatimAI</h1>
+        <div style='background: #f5f5f5; padding: 15px; border-radius: 5px; margin-bottom: 20px;'>
+            <strong>Color Key:</strong>
+            <ul style='margin: 10px 0; padding-left: 20px;'>
+                <li><span style='color: #28a745;'>Green</span> - Content matches between draft and live site</li>
+                <li><span style='color: #dc3545;'>Red</span> - Content in draft but missing from live site</li>
+                <li><span style='color: #007bff;'>Blue</span> - Content on live site but not in draft</li>
+            </ul>
+        </div>
+    </div>
+    """
+    
+    report += f"<h2>{docx_file} vs <a href='{url}'>{url}</a></h2>"
     report += f"<p><strong>Page Title:</strong> {title}</p>"
     report += f"<p><strong>Meta Description:</strong> {meta_desc}</p>"
     report += f"<p><strong>Similarity Score:</strong> {similarity:.2%}</p>"
-    report += "<div style='display: flex; gap: 20px;'>"
     
-    # Draft column
-    report += "<div style='width: 50%;'><h3>Draft</h3><div style='white-space: pre-wrap;'>"
+    if similarity > 0.95:
+        report += "<p style='color: #28a745;'>✅ Content is mostly identical.</p>"
+    elif similarity > 0.75:
+        report += "<p style='color: #ffc107;'>⚠️ Content has minor differences.</p>"
+    else:
+        report += "<p style='color: #dc3545;'>❌ Content is significantly different.</p>"
+
+    # Start the two-column layout
+    report += "<div style='display: flex; margin-top: 20px; gap: 20px;'>"
+    
+    # Draft content column
+    report += "<div style='flex: 1;'>"
+    report += "<h3>Draft Content</h3>"
+    report += "<div style='border: 1px solid #ddd; padding: 10px;'>"
+    
+    # Live content column
+    live_column = "<div style='flex: 1;'>"
+    live_column += "<h3>Live Content</h3>"
+    live_column += "<div style='border: 1px solid #ddd; padding: 10px;'>"
+
+    # Track positions for live content
+    live_content = {}
+    current_pos = 0
+    
+    # First pass: Map positions of matched content
     for tag, draft, live in results:
-        if tag in ['matched', 'missing']:
-            report += f"<div style='background:{'#e6ffe6' if tag == 'matched' else '#ffe6e6'}; margin-bottom: 10px; padding: 10px;'>{draft}</div>"
-        else:  # tag == 'current'
-            # Create an invisible div with the same content to maintain spacing
-            report += f"<div style='visibility: hidden; margin-bottom: 10px; padding: 10px;'>{live}</div>"
-    report += "</div></div>"
-    
-    # Live column
-    report += "<div style='width: 50%;'><h3>Live Webpage</h3><div style='white-space: pre-wrap;'>"
+        if tag == "matched":
+            live_content[current_pos] = (tag, draft, live)
+        current_pos += 1
+
+    # Second pass: Add missing and current content
     for tag, draft, live in results:
-        if tag in ['matched', 'current']:
-            report += f"<div style='background:{'#e6ffe6' if tag == 'matched' else '#e6f0ff'}; margin-bottom: 10px; padding: 10px;'>{live}</div>"
-        else:  # tag == 'missing'
-            # Create an invisible div with the same content to maintain spacing
-            report += f"<div style='visibility: hidden; margin-bottom: 10px; padding: 10px;'>{draft}</div>"
-    report += "</div></div>"
+        if tag == "missing":
+            live_content[current_pos] = (tag, draft, None)
+        elif tag == "current":
+            # Find the next available position
+            while current_pos in live_content:
+                current_pos += 1
+            live_content[current_pos] = (tag, None, live)
+        current_pos += 1
+
+    # Generate the HTML with proper positioning
+    draft_html = []
+    live_html = []
     
-    report += "</div><hr>"
+    for pos in sorted(live_content.keys()):
+        tag, draft, live = live_content[pos]
+        if tag == "matched":
+            draft_html.append(f"<div style='background-color: #e8f5e9; padding: 10px; margin-bottom: 10px;'>{draft}</div>")
+            live_html.append(f"<div style='background-color: #e8f5e9; padding: 10px; margin-bottom: 10px;'>{live}</div>")
+        elif tag == "missing":
+            draft_html.append(f"<div style='background-color: #ffebee; padding: 10px; margin-bottom: 10px;'>{draft}</div>")
+            live_html.append("<div style='padding: 10px; margin-bottom: 10px; border: 1px dashed #ddd;'><em>Content missing from live site</em></div>")
+        elif tag == "current":
+            draft_html.append("<div style='padding: 10px; margin-bottom: 10px; border: 1px dashed #ddd;'><em>Content not in draft</em></div>")
+            live_html.append(f"<div style='background-color: #e3f2fd; padding: 10px; margin-bottom: 10px;'>{live}</div>")
+
+    # Add the content to the columns
+    report += "".join(draft_html) + "</div></div>"  # Close draft column
+    report += live_column + "".join(live_html) + "</div></div>"  # Add and close live column
+    
+    report += "</div>"  # Close the flex container
     return report
 
 def format_result_as_markdown(docx_file, url, title, meta_desc, similarity, results):
@@ -465,9 +527,53 @@ def run_batch_comparison():
 
             html_file_path = os.path.join(folder, f"report_{i}_{os.path.splitext(docx_file)[0]}.html")
             with open(html_file_path, "w", encoding="utf-8") as f:
-                f.write(f"<html><head><meta charset='UTF-8'><title>Comparison Report</title></head><body>{html_report}</body></html>")
+                f.write(f"""<html>
+                    <head>
+                        <meta charset='UTF-8'>
+                        <title>VerbatimAI - Comparison Report</title>
+                        <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap" rel="stylesheet">
+                        <style>
+                            body {{ 
+                                font-family: Roboto, Arial, sans-serif; 
+                                margin: 20px;
+                                line-height: 1.6;
+                            }}
+                            h1 {{ 
+                                font-size: 32px; 
+                                font-weight: bold; 
+                                margin: 0 0 20px 0;
+                            }}
+                            .color-key {{
+                                background: #f5f5f5;
+                                padding: 15px;
+                                border-radius: 5px;
+                                margin-bottom: 20px;
+                            }}
+                            .color-key ul {{
+                                margin: 10px 0;
+                                padding-left: 20px;
+                            }}
+                            .matched {{
+                                background-color: #e8f5e9;
+                            }}
+                            .missing {{
+                                background-color: #ffebee;
+                            }}
+                            .current {{
+                                background-color: #e3f2fd;
+                            }}
+                            .placeholder {{
+                                border: 1px dashed #ddd;
+                                color: #666;
+                                font-style: italic;
+                            }}
+                        </style>
+                    </head>
+                    <body>{html_report}</body>
+                </html>""")
             if i == total:
-                webbrowser.open(f"file://{html_file_path}")
+                # Open the folder instead of the HTML file
+                os.startfile(folder)
 
             report_md += markdown_report
             summary.append(f"{url} → Similarity: {similarity:.2%}")
@@ -487,19 +593,57 @@ def run_batch_comparison():
 
 # ------------------ GUI Setup ------------------
 
+def resource_path(relative_path):
+    """ Get absolute path to resource, works for dev and for PyInstaller """
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
+
 if __name__ == "__main__":
     root = tk.Tk()
-    root.title("Manual Match Draft vs Webpage Comparison Tool")
+    root.title("VerbatimAI")
 
+    # Set the window icon
+    try:
+        icon_path = resource_path('verbatim.ico')
+        root.iconbitmap(default=icon_path)
+    except Exception as e:
+        print(f"Error loading icon: {e}")
+        pass
+
+    # Create main frame with padding
     frame = tk.Frame(root)
-    frame.pack(padx=10, pady=10)
+    frame.pack(padx=20, pady=20)
 
-    button = tk.Button(frame, text="Run Manual Match & Compare", command=run_batch_comparison)
+    # Add logo
+    try:
+        logo_path = resource_path('smbteam-logo.png')
+        logo_image = tk.PhotoImage(file=logo_path)
+        # Resize the image to a reasonable size
+        logo_image = logo_image.subsample(2, 2)  # Adjust these values if needed
+        logo_label = tk.Label(frame, image=logo_image)
+        logo_label.image = logo_image  # Keep a reference to prevent garbage collection
+        logo_label.pack(pady=(0, 10))
+    except Exception as e:
+        print(f"Error loading logo: {e}")
+        pass
+
+    # Add title text with Roboto font
+    title_label = tk.Label(frame, text="VerbatimAI", font=("Roboto", 32, "bold"))
+    title_label.pack(pady=(0, 20))
+
+    # Add the main button
+    button = tk.Button(frame, text="Start AutoCompare", command=run_batch_comparison)
     button.pack(pady=5)
 
+    # Add progress bar
     progress_bar = ttk.Progressbar(frame, orient="horizontal", length=600, mode="determinate")
     progress_bar.pack(pady=5)
 
+    # Add text area
     text_area = scrolledtext.ScrolledText(root, wrap=tk.WORD, width=60, height=10)
     text_area.pack(padx=10, pady=10)
 
