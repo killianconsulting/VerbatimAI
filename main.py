@@ -36,22 +36,128 @@ def get_document_url_pairs(docx_files, parent_window):
     match_window.transient(parent_window)
     match_window.grab_set()
     
+    # Check if dark mode is enabled
+    current_settings = load_settings()
+    is_dark_mode = current_settings.get('dark_mode', 'false').lower() == 'true'
+    
+    # Apply theme colors
+    bg_color = '#1e1e1e' if is_dark_mode else '#f0f0f0'
+    fg_color = '#ffffff' if is_dark_mode else '#000000'
+    entry_bg = '#2d2d2d' if is_dark_mode else '#ffffff'
+    button_bg = '#404040' if is_dark_mode else '#e0e0e0'
+    button_fg = '#ffffff' if is_dark_mode else '#000000'
+    
+    # Configure ttk styles for dark mode
+    style = ttk.Style()
+    if is_dark_mode:
+        # Entry style
+        style.configure('url.TEntry', 
+                       fieldbackground='#2d2d2d',
+                       background='#2d2d2d',
+                       foreground='#ffffff',
+                       insertcolor='#ffffff',
+                       selectbackground='#404040',
+                       selectforeground='#ffffff')
+        
+        # Button style
+        style.configure('url.TButton',
+                       background='#404040',
+                       foreground='#000000',
+                       bordercolor='#505050',
+                       lightcolor='#404040',
+                       darkcolor='#2d2d2d',
+                       relief='raised')
+        
+        style.map('url.TButton',
+                 background=[('active', '#505050'), ('pressed', '#303030')],
+                 foreground=[('active', '#000000'), ('pressed', '#000000')])
+    else:
+        # Light mode styles
+        style.configure('url.TEntry',
+                       fieldbackground='#ffffff',
+                       background='#ffffff',
+                       foreground='#000000',
+                       insertcolor='#000000',
+                       selectbackground='#0078d7',
+                       selectforeground='#ffffff')
+        
+        style.configure('url.TButton',
+                       background='#f0f0f0',
+                       foreground='#000000')
+        
+        style.map('url.TButton',
+                 background=[('active', '#e0e0e0'), ('pressed', '#cccccc')],
+                 foreground=[('active', '#000000'), ('pressed', '#000000')])
+    
+    # Apply colors to the window and its children
+    match_window.configure(bg=bg_color)
+    
     entries = []
-    canvas = tk.Canvas(match_window)
+    canvas = tk.Canvas(match_window, bg=bg_color, highlightthickness=0)
     scrollbar = tk.Scrollbar(match_window, orient="vertical", command=canvas.yview)
-    scroll_frame = tk.Frame(canvas)
+    scroll_frame = tk.Frame(canvas, bg=bg_color)
 
     scroll_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
     canvas.create_window((0, 0), window=scroll_frame, anchor="nw")
     canvas.configure(yscrollcommand=scrollbar.set)
 
-    tk.Label(scroll_frame, text="Enter the URL that matches each DOCX file:", font=("Arial", 12, "bold")).pack(pady=10)
+    # Add instructions with theme-aware colors
+    instructions = tk.Label(scroll_frame, 
+                          text="Enter the URL that matches each DOCX file.\nTip: You can paste multiple URLs at once!", 
+                          font=("Arial", 12, "bold"),
+                          justify=tk.CENTER,
+                          bg=bg_color,
+                          fg=fg_color)
+    instructions.pack(pady=10)
+
+    # Create a frame for the paste button
+    paste_frame = tk.Frame(scroll_frame, bg=bg_color)
+    paste_frame.pack(fill="x", padx=10, pady=5)
+
+    def paste_urls():
+        try:
+            # Get clipboard content
+            clipboard = match_window.clipboard_get()
+            # Split into lines and clean up
+            urls = [url.strip() for url in clipboard.splitlines() if url.strip()]
+            
+            # Fill as many entry fields as we have URLs
+            for i, url in enumerate(urls):
+                if i < len(entries):
+                    entries[i][1].delete(0, tk.END)
+                    entries[i][1].insert(0, url)
+        except tk.TclError:
+            messagebox.showwarning("Clipboard Empty", "No text found in clipboard.")
+        except Exception as e:
+            messagebox.showerror("Error", f"Error pasting URLs: {str(e)}")
+
+    paste_btn = ttk.Button(paste_frame, text="Paste URLs from Clipboard", command=paste_urls, style='url.TButton')
+    paste_btn.pack(side="right", padx=10)
+
+    # Add tooltip for paste button with theme-aware colors
+    paste_tooltip = tk.Label(paste_frame, 
+                           text="Copy a list of URLs (one per line) and click here to auto-fill",
+                           foreground='#a0a0a0',
+                           bg=bg_color)
+    paste_tooltip.pack(side="right", padx=5)
+
+    # Create entry fields
     for file in docx_files:
-        frame = tk.Frame(scroll_frame)
+        frame = tk.Frame(scroll_frame, bg=bg_color)
         frame.pack(fill="x", padx=10, pady=5)
-        tk.Label(frame, text=file, width=80, anchor="w").pack(side="left")
-        url_entry = tk.Entry(frame, width=100)
+        
+        # File label with fixed width and theme-aware colors
+        file_label = tk.Label(frame, text=file, width=80, anchor="w", bg=bg_color, fg=fg_color)
+        file_label.pack(side="left")
+        
+        # URL entry with theme-aware colors
+        url_entry = ttk.Entry(frame, width=100, style='url.TEntry')
         url_entry.pack(side="left", padx=5, fill="x", expand=True)
+        
+        # Enable Ctrl+V for pasting in entry
+        url_entry.bind('<Control-v>', lambda e: 'break')  # Prevent default paste
+        url_entry.bind('<Control-V>', lambda e: 'break')  # Prevent default paste
+        
         entries.append((file, url_entry))
 
     matched_pairs = []
@@ -67,7 +173,7 @@ def get_document_url_pairs(docx_files, parent_window):
         match_window.grab_release()
         match_window.destroy()
 
-    submit_btn = tk.Button(scroll_frame, text="Start AutoCompare", command=submit)
+    submit_btn = ttk.Button(scroll_frame, text="Start AutoCompare", command=submit, style='url.TButton')
     submit_btn.pack(pady=20)
 
     canvas.pack(side="left", fill="both", expand=True)
@@ -489,14 +595,14 @@ def format_result_as_html(docx_file, url, title, meta_desc, similarity, results)
         <div class='header'>
             <h1>Verbatim AI Content Comparison</h1>
             <div class='color-key'>
-                <strong>Color Key:</strong>
+            <strong>Color Key:</strong>
                 <ul>
                     <li><span class='matched-text'>Green</span> - Content matches between draft and live site</li>
                     <li><span class='missing-text'>Red</span> - Content in draft but missing from live site</li>
                     <li><span class='current-text'>Blue</span> - Content on live site but not in draft</li>
-                </ul>
-            </div>
+            </ul>
         </div>
+    </div>
 
         <div class='page-info'>
             <h2>Document Comparison</h2>
@@ -732,14 +838,14 @@ def handle_drop(event):
         messagebox.showerror("Error", "No .docx files found in the dropped items.")
         return
     
-    # Create a temporary folder for processing
+    # Create a results folder
     first_file_dir = os.path.dirname(docx_files[0])
-    temp_folder = os.path.join(first_file_dir, "VerbatimAI_Comparison")
-    if not os.path.exists(temp_folder):
-        os.makedirs(temp_folder)
+    results_folder = os.path.join(first_file_dir, "VerbatimAI_Results")
+    if not os.path.exists(results_folder):
+        os.makedirs(results_folder)
     
     # Process the files
-    process_files(temp_folder, docx_files)
+    process_files(results_folder, docx_files)
 
 def run_batch_comparison(folder=None):
     """Run comparison for files selected through folder, multiple files, or single file"""
@@ -762,6 +868,53 @@ def run_batch_comparison(folder=None):
         y = (screen_height - window_height) // 2
         selection_window.geometry(f"{window_width}x{window_height}+{x}+{y}")
 
+        # Check if dark mode is enabled
+        current_settings = load_settings()
+        is_dark_mode = current_settings.get('dark_mode', 'false').lower() == 'true'
+        
+        # Apply theme colors
+        bg_color = '#1e1e1e' if is_dark_mode else '#f0f0f0'
+        fg_color = '#ffffff' if is_dark_mode else '#000000'
+        button_bg = '#404040' if is_dark_mode else '#e0e0e0'
+        
+        # Configure window colors
+        selection_window.configure(bg=bg_color)
+        
+        # Configure ttk styles for the selection window
+        style = ttk.Style()
+        if is_dark_mode:
+            style.configure('Select.TFrame', 
+                          background='#1e1e1e')
+            
+            style.configure('Select.TButton',
+                          background='#404040',
+                          foreground='#000000',
+                          bordercolor='#505050',
+                          lightcolor='#404040')
+            
+            style.map('Select.TButton',
+                     background=[('active', '#505050'), ('pressed', '#303030')],
+                     foreground=[('active', '#000000'), ('pressed', '#000000')])
+            
+            style.configure('Select.TLabel',
+                          background='#1e1e1e',
+                          foreground='#ffffff')
+        else:
+            style.configure('Select.TFrame', 
+                          background='#f0f0f0')
+            
+            style.configure('Select.TButton',
+                          background='#f0f0f0',
+                          foreground='#000000')
+            
+            style.map('Select.TButton',
+                     background=[('active', '#e0e0e0'), ('pressed', '#cccccc')],
+                     foreground=[('active', '#000000'), ('pressed', '#000000')])
+            
+            style.configure('Select.TLabel',
+                          background='#f0f0f0',
+                          foreground='#000000')
+
         def select_folder():
             selection_window.destroy()
             folder_path = filedialog.askdirectory(title="Select Folder Containing Draft DOCX Files")
@@ -776,46 +929,57 @@ def run_batch_comparison(folder=None):
             )
             if files:
                 # Create temporary folder for selected files
-                temp_folder = os.path.join(os.path.dirname(files[0]), "VerbatimAI_Comparison")
+                temp_folder = os.path.join(os.path.dirname(files[0]), "VerbatimAI_Results")
                 if not os.path.exists(temp_folder):
                     os.makedirs(temp_folder)
                 
                 # Process selected files
                 process_files(temp_folder, files)
 
-        # Add descriptive labels and buttons
-        tk.Label(
+        # Add descriptive labels and buttons with theme-aware styling
+        title_label = tk.Label(
             selection_window,
             text="Choose how you want to upload documents:",
-            font=("Roboto", 12)
-        ).pack(pady=20)
+            font=("Roboto", 12),
+            bg=bg_color,
+            fg=fg_color
+        )
+        title_label.pack(pady=20)
 
-        button_frame = ttk.Frame(selection_window)
+        button_frame = ttk.Frame(selection_window, style='Select.TFrame')
         button_frame.pack(fill='x', padx=20)
 
-        ttk.Button(
+        folder_button = ttk.Button(
             button_frame,
             text="Select Folder",
-            command=select_folder
-        ).pack(fill='x', pady=5)
+            command=select_folder,
+            style='Select.TButton'
+        )
+        folder_button.pack(fill='x', pady=5)
         
-        ttk.Label(
+        folder_label = ttk.Label(
             button_frame,
             text="Upload an entire folder of DOCX files",
-            foreground='gray'
-        ).pack()
+            foreground='#a0a0a0',
+            style='Select.TLabel'
+        )
+        folder_label.pack()
 
-        ttk.Button(
+        files_button = ttk.Button(
             button_frame,
             text="Select Files",
-            command=select_files
-        ).pack(fill='x', pady=(15,5))
+            command=select_files,
+            style='Select.TButton'
+        )
+        files_button.pack(fill='x', pady=(15,5))
         
-        ttk.Label(
+        files_label = ttk.Label(
             button_frame,
             text="Choose one or multiple DOCX files",
-            foreground='gray'
-        ).pack()
+            foreground='#a0a0a0',
+            style='Select.TLabel'
+        )
+        files_label.pack()
 
         return
 
@@ -826,13 +990,11 @@ def process_files(folder, specific_files=None):
     # Get DOCX files based on selection method
     if specific_files:
         docx_files = [os.path.basename(f) for f in specific_files]
-        # Copy selected files to the temporary folder
-        for file in specific_files:
-            dest = os.path.join(folder, os.path.basename(file))
-            if os.path.abspath(file) != os.path.abspath(dest):
-                shutil.copy2(file, dest)
+        # Store original file paths for processing
+        original_paths = {os.path.basename(f): f for f in specific_files}
     else:
         docx_files = sorted([f for f in os.listdir(folder) if f.endswith(".docx")])
+        original_paths = {f: os.path.join(folder, f) for f in docx_files}
 
     if not docx_files:
         messagebox.showerror("Error", "No .docx files found in the selected location.")
@@ -856,7 +1018,8 @@ def process_files(folder, specific_files=None):
         
         for i, (docx_file, url) in enumerate(matches, start=1):
             try:
-                full_path = os.path.join(folder, docx_file)
+                # Use original file path for processing
+                full_path = original_paths[docx_file]
                 draft_text = normalize_text(get_docx_text(full_path))
                 live_text, title, meta_desc = get_webpage_text(url)
                 live_text = normalize_text(live_text)
@@ -871,59 +1034,59 @@ def process_files(folder, specific_files=None):
                 # Generate reports
                 html_report = format_result_as_html(docx_file, url, title, meta_desc, similarity, diff)
                 markdown_report = format_result_as_markdown(docx_file, url, title, meta_desc, similarity, diff)
-                
+
                 # Save HTML report
                 html_file_path = os.path.join(folder, f"report_{i}_{os.path.splitext(docx_file)[0]}.html")
                 with open(html_file_path, "w", encoding="utf-8") as f:
                     f.write(f"""<!DOCTYPE html>
                     <html>
-                        <head>
-                            <meta charset='UTF-8'>
+                    <head>
+                        <meta charset='UTF-8'>
                             <title>Verbatim AI - Comparison Report</title>
-                            <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap" rel="stylesheet">
-                            <style>
-                                body {{ 
-                                    font-family: Roboto, Arial, sans-serif; 
-                                    margin: 20px;
-                                    line-height: 1.6;
-                                }}
-                                h1 {{ 
-                                    font-size: 32px; 
-                                    font-weight: bold; 
-                                    margin: 0 0 20px 0;
-                                }}
-                                .color-key {{
-                                    background: #f5f5f5;
-                                    padding: 15px;
-                                    border-radius: 5px;
-                                    margin-bottom: 20px;
-                                }}
-                                .color-key ul {{
-                                    margin: 10px 0;
-                                    padding-left: 20px;
-                                }}
-                                .matched {{
-                                    background-color: #e8f5e9;
-                                }}
-                                .missing {{
-                                    background-color: #ffebee;
-                                }}
-                                .current {{
-                                    background-color: #e3f2fd;
-                                }}
-                                .placeholder {{
-                                    border: 1px dashed #ddd;
-                                    color: #666;
-                                    font-style: italic;
-                                }}
-                            </style>
-                        </head>
-                        <body>{html_report}</body>
-                    </html>""")
-                
+                        <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap" rel="stylesheet">
+                        <style>
+                            body {{ 
+                                font-family: Roboto, Arial, sans-serif; 
+                                margin: 20px;
+                                line-height: 1.6;
+                            }}
+                            h1 {{ 
+                                font-size: 32px; 
+                                font-weight: bold; 
+                                margin: 0 0 20px 0;
+                            }}
+                            .color-key {{
+                                background: #f5f5f5;
+                                padding: 15px;
+                                border-radius: 5px;
+                                margin-bottom: 20px;
+                            }}
+                            .color-key ul {{
+                                margin: 10px 0;
+                                padding-left: 20px;
+                            }}
+                            .matched {{
+                                background-color: #e8f5e9;
+                            }}
+                            .missing {{
+                                background-color: #ffebee;
+                            }}
+                            .current {{
+                                background-color: #e3f2fd;
+                            }}
+                            .placeholder {{
+                                border: 1px dashed #ddd;
+                                color: #666;
+                                font-style: italic;
+                            }}
+                        </style>
+                    </head>
+                    <body>{html_report}</body>
+                </html>""")
+
                 report_md += markdown_report
                 summary.append(f"{url} → Similarity: {similarity:.2%}")
-                
+
             except Exception as e:
                 report_md += f"## {docx_file} vs {url}\n❌ Error: {str(e)}\n\n"
                 summary.append(f"❌ {url}: Error")
@@ -943,12 +1106,112 @@ def process_files(folder, specific_files=None):
         text_area.delete(1.0, tk.END)
         text_area.insert(tk.END, "Reports saved.\n\n" + "\n".join(summary))
         
-        # Show completion message
-        messagebox.showinfo("Done", f"✅ Batch comparison complete.\nMarkdown saved to:\n{md_path}\nHTML reports saved alongside each docx.")
-        progress_bar["value"] = 0
+        # Show completion message with theme-aware styling
+        completion_window = tk.Toplevel(root)
+        completion_window.title("Comparison Complete")
         
-        # Open the results folder
-        os.startfile(folder)
+        # Make window modal
+        completion_window.transient(root)
+        completion_window.grab_set()
+        
+        # Set size and position
+        window_width = 400
+        window_height = 200
+        screen_width = completion_window.winfo_screenwidth()
+        screen_height = completion_window.winfo_screenheight()
+        x = (screen_width - window_width) // 2
+        y = (screen_height - window_height) // 2
+        completion_window.geometry(f"{window_width}x{window_height}+{x}+{y}")
+
+        # Check if dark mode is enabled
+        current_settings = load_settings()
+        is_dark_mode = current_settings.get('dark_mode', 'false').lower() == 'true'
+        
+        # Apply theme colors
+        bg_color = '#1e1e1e' if is_dark_mode else '#f0f0f0'
+        fg_color = '#ffffff' if is_dark_mode else '#000000'
+        
+        # Configure window colors
+        completion_window.configure(bg=bg_color)
+        
+        # Configure ttk styles
+        style = ttk.Style()
+        if is_dark_mode:
+            style.configure('Complete.TFrame', background='#1e1e1e')
+            style.configure('Complete.TButton',
+                          background='#404040',
+                          foreground='#000000',
+                          bordercolor='#505050',
+                          lightcolor='#404040')
+            style.map('Complete.TButton',
+                     background=[('active', '#505050'), ('pressed', '#303030')],
+                     foreground=[('active', '#000000'), ('pressed', '#000000')])
+        else:
+            style.configure('Complete.TFrame', background='#f0f0f0')
+            style.configure('Complete.TButton',
+                          background='#f0f0f0',
+                          foreground='#000000')
+            style.map('Complete.TButton',
+                     background=[('active', '#e0e0e0'), ('pressed', '#cccccc')],
+                     foreground=[('active', '#000000'), ('pressed', '#000000')])
+
+        # Create main frame
+        main_frame = ttk.Frame(completion_window, style='Complete.TFrame')
+        main_frame.pack(fill='both', expand=True, padx=20, pady=20)
+
+        # Add checkmark and title
+        title_text = "✅ Batch comparison complete"
+        title_label = tk.Label(
+            main_frame,
+            text=title_text,
+            font=("Roboto", 14, "bold"),
+            bg=bg_color,
+            fg=fg_color
+        )
+        title_label.pack(pady=(0, 10))
+
+        # Add file paths
+        path_text = f"Markdown saved to:\n{md_path}\n\nHTML reports saved in the same folder."
+        path_label = tk.Label(
+            main_frame,
+            text=path_text,
+            justify=tk.LEFT,
+            bg=bg_color,
+            fg=fg_color,
+            wraplength=350
+        )
+        path_label.pack(pady=10)
+
+        # Add buttons
+        button_frame = ttk.Frame(main_frame, style='Complete.TFrame')
+        button_frame.pack(fill='x', pady=(20, 0))
+
+        def open_folder():
+            os.startfile(folder)
+            completion_window.destroy()
+
+        def close_window():
+            completion_window.destroy()
+
+        open_button = ttk.Button(
+            button_frame,
+            text="Open Folder",
+            command=open_folder,
+            style='Complete.TButton'
+        )
+        open_button.pack(side='left', padx=5)
+
+        close_button = ttk.Button(
+            button_frame,
+            text="Close",
+            command=close_window,
+            style='Complete.TButton'
+        )
+        close_button.pack(side='right', padx=5)
+
+        # Center the window
+        completion_window.update_idletasks()
+        completion_window.geometry(f"+{x}+{y}")
         
     except Exception as e:
         messagebox.showerror("Error", f"An error occurred during comparison: {str(e)}")
@@ -1049,7 +1312,8 @@ def load_settings():
     
     settings = {
         'default_save_location': downloads_path,
-        'similarity_threshold': '0.9'
+        'similarity_threshold': '0.9',
+        'dark_mode': 'false'
     }
     
     settings_file = os.path.join(os.path.dirname(__file__), "config", "settings.txt")
@@ -1063,6 +1327,154 @@ def load_settings():
                         settings[key] = value
     
     return settings
+
+def apply_theme(is_dark_mode):
+    """Apply light or dark theme to the application"""
+    if is_dark_mode:
+        # Dark mode colors
+        root.configure(bg='#1e1e1e')
+        frame.configure(bg='#1e1e1e')
+        style = ttk.Style()
+        style.configure('TFrame', background='#1e1e1e')
+        style.configure('TLabel', background='#1e1e1e', foreground='#ffffff')
+        
+        # Configure all button styles with black text in dark mode
+        style.configure('TButton',
+                      background='#404040',
+                      foreground='#000000')
+        style.map('TButton',
+                 background=[('active', '#505050'), ('pressed', '#303030')],
+                 foreground=[('active', '#000000'), ('pressed', '#000000')])
+        
+        style.configure('Select.TButton',
+                      background='#404040',
+                      foreground='#000000',
+                      bordercolor='#505050',
+                      lightcolor='#404040')
+        style.map('Select.TButton',
+                 background=[('active', '#505050'), ('pressed', '#303030')],
+                 foreground=[('active', '#000000'), ('pressed', '#000000')])
+        
+        style.configure('url.TButton',
+                      background='#404040',
+                      foreground='#000000',
+                      bordercolor='#505050',
+                      lightcolor='#404040')
+        style.map('url.TButton',
+                 background=[('active', '#505050'), ('pressed', '#303030')],
+                 foreground=[('active', '#000000'), ('pressed', '#000000')])
+        
+        style.configure('Complete.TButton',
+                      background='#404040',
+                      foreground='#000000',
+                      bordercolor='#505050',
+                      lightcolor='#404040')
+        style.map('Complete.TButton',
+                 background=[('active', '#505050'), ('pressed', '#303030')],
+                 foreground=[('active', '#000000'), ('pressed', '#000000')])
+        
+        style.configure('TEntry', fieldbackground='#2d2d2d', foreground='#ffffff')
+        
+        # Configure menu colors
+        menubar.configure(bg='#2d2d2d', fg='#ffffff', 
+                        activebackground='#404040', activeforeground='#ffffff')
+        for menu in [file_menu, edit_menu, view_menu, help_menu]:
+            menu.configure(bg='#2d2d2d', fg='#ffffff', 
+                         activebackground='#404040', activeforeground='#ffffff',
+                         selectcolor='#ffffff')
+        
+        # Configure text area
+        text_area.configure(
+            bg='#2d2d2d',
+            fg='#ffffff',
+            insertbackground='#ffffff',
+            selectbackground='#404040',
+            selectforeground='#ffffff'
+        )
+        
+        # Configure other widgets
+        if hasattr(root, 'title_label'):
+            root.title_label.configure(bg='#1e1e1e', fg='#ffffff')
+        
+        if USE_DND and hasattr(root, 'drop_target'):
+            root.drop_target.configure(bg='#2d2d2d', fg='#ffffff')
+        elif hasattr(root, 'no_dnd_label'):
+            root.no_dnd_label.configure(bg='#2d2d2d', fg='#ffffff')
+
+        # Update logo background for dark mode
+        if hasattr(root, 'logo_label'):
+            root.logo_label.configure(bg='#1e1e1e')
+        
+    else:
+        # Light mode colors
+        root.configure(bg='#f0f0f0')
+        frame.configure(bg='#f0f0f0')
+        style = ttk.Style()
+        style.configure('TFrame', background='#f0f0f0')
+        style.configure('TLabel', background='#f0f0f0', foreground='#000000')
+        
+        style.configure('TButton',
+                       background='#ffffff',
+                       foreground='#000000')
+        
+        style.configure('Select.TButton',
+                       background='#f0f0f0',
+                       foreground='#000000')
+        
+        style.configure('url.TButton',
+                       background='#f0f0f0',
+                       foreground='#000000')
+        
+        style.configure('Complete.TButton',
+                       background='#f0f0f0',
+                       foreground='#000000')
+        
+        style.configure('TEntry', fieldbackground='#ffffff', foreground='#000000')
+        
+        # Configure menu colors
+        menubar.configure(bg='#f0f0f0', fg='#000000', 
+                        activebackground='#e0e0e0', activeforeground='#000000')
+        for menu in [file_menu, edit_menu, view_menu, help_menu]:
+            menu.configure(bg='#f0f0f0', fg='#000000', 
+                         activebackground='#e0e0e0', activeforeground='#000000',
+                         selectcolor='#000000')
+        
+        # Configure text area
+        text_area.configure(
+            bg='#ffffff',
+            fg='#000000',
+            insertbackground='#000000',
+            selectbackground='#0078d7',
+            selectforeground='#ffffff'
+        )
+        
+        # Configure other widgets
+        if hasattr(root, 'title_label'):
+            root.title_label.configure(bg='#f0f0f0', fg='#000000')
+        
+        if USE_DND and hasattr(root, 'drop_target'):
+            root.drop_target.configure(bg='#f0f0f0', fg='#000000')
+        elif hasattr(root, 'no_dnd_label'):
+            root.no_dnd_label.configure(bg='#f0f0f0', fg='#000000')
+
+        # Update logo background for light mode
+        if hasattr(root, 'logo_label'):
+            root.logo_label.configure(bg='#f0f0f0')
+
+def toggle_dark_mode():
+    """Toggle between light and dark mode"""
+    current_settings = load_settings()
+    is_dark_mode = current_settings.get('dark_mode', 'false').lower() == 'true'
+    
+    # Toggle the mode
+    is_dark_mode = not is_dark_mode
+    
+    # Apply the theme
+    apply_theme(is_dark_mode)
+    
+    # Save the setting
+    current_settings['dark_mode'] = str(is_dark_mode).lower()
+    save_settings(current_settings)
 
 def show_settings():
     """Show settings/preferences dialog"""
@@ -1276,6 +1688,13 @@ if __name__ == "__main__":
     edit_menu.add_separator()
     edit_menu.add_command(label="Clear All", command=clear_all, accelerator="Ctrl+Delete")
 
+    # Create View menu
+    view_menu = tk.Menu(menubar, tearoff=0)
+    menubar.add_cascade(label="View", menu=view_menu)
+    
+    # Add View menu items
+    view_menu.add_checkbutton(label="Dark Mode", command=toggle_dark_mode)
+
     # Create Help menu
     help_menu = tk.Menu(menubar, tearoff=0)
     menubar.add_cascade(label="Help", menu=help_menu)
@@ -1311,9 +1730,10 @@ if __name__ == "__main__":
         logo_path = resource_path('smbteam-logo.png')
         logo_image = tk.PhotoImage(file=logo_path)
         # Resize the image to a reasonable size
-        logo_image = logo_image.subsample(2, 2)  # Adjust these values if needed
+        logo_image = logo_image.subsample(2, 2)
         logo_label = tk.Label(frame, image=logo_image)
-        logo_label.image = logo_image  # Keep a reference to prevent garbage collection
+        logo_label.image = logo_image
+        root.logo_label = logo_label  # Store reference for theme switching
         logo_label.pack(pady=(0, 10))
     except Exception as e:
         print(f"Error loading logo: {e}")
@@ -1321,6 +1741,7 @@ if __name__ == "__main__":
 
     # Add title text with Roboto font
     title_label = tk.Label(frame, text="Verbatim AI", font=("Roboto", 32, "bold"))
+    root.title_label = title_label  # Store reference for theme switching
     title_label.pack(pady=(0, 20))
 
     # Create drop target area if DND is available
@@ -1331,9 +1752,9 @@ if __name__ == "__main__":
             width=40,
             height=5,
             relief="solid",
-            borderwidth=2,
-            bg="#f0f0f0"
+            borderwidth=2
         )
+        root.drop_target = drop_target  # Store reference for theme switching
         drop_target.pack(pady=10)
         
         # Register drop target
@@ -1347,8 +1768,7 @@ if __name__ == "__main__":
             width=40,
             height=5,
             relief="solid",
-            borderwidth=2,
-            bg="#f0f0f0"
+            borderwidth=2
         )
         no_dnd_label.pack(pady=10)
 
@@ -1363,5 +1783,10 @@ if __name__ == "__main__":
     # Add text area
     text_area = scrolledtext.ScrolledText(root, wrap=tk.WORD, width=60, height=10)
     text_area.pack(padx=10, pady=10)
+
+    # Apply initial theme based on settings
+    current_settings = load_settings()
+    is_dark_mode = current_settings.get('dark_mode', 'false').lower() == 'true'
+    apply_theme(is_dark_mode)
 
     root.mainloop() 
