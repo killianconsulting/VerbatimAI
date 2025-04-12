@@ -124,8 +124,18 @@ def get_webpage_text(url):
             # Get the complete text of the element
             text = tag_copy.get_text(" ", strip=True)
             if text and len(text) > 1:
-                # Preserve heading tags
+                # For headings, check if they're visible and not hidden by CSS
                 if tag.name.startswith('h'):
+                    # Skip headings that are likely hidden
+                    parent_style = tag.get('style', '') + ' '.join(parent.get('style', '') for parent in tag.parents if parent.get('style'))
+                    if any(style in parent_style.lower() for style in ['display: none', 'visibility: hidden']):
+                        continue
+                    # Skip headings inside navigation, header, or footer
+                    if tag.find_parent(['nav', 'header', 'footer']):
+                        continue
+                    # Skip headings that are part of a menu or navigation
+                    if any('menu' in cls.lower() or 'nav' in cls.lower() for cls in tag.get('class', [])):
+                        continue
                     paragraphs.append(f"<{tag.name}>{text}</{tag.name}>")
                 else:
                     paragraphs.append(text)
@@ -282,103 +292,179 @@ def block_compare(draft, live, similarity_threshold=0.9):
     live_h1_index = next((i for i, block in enumerate(live_blocks) if block.startswith('<h1>')), -1)
     
     # Track total content and matched content for similarity calculation
-    # Only count content after H1 tags to exclude metadata
     total_draft_length = sum(len(block) for block in draft_blocks[draft_h1_index:]) if draft_h1_index != -1 else sum(len(block) for block in draft_blocks)
     total_live_length = sum(len(block) for block in live_blocks[live_h1_index:]) if live_h1_index != -1 else sum(len(block) for block in live_blocks)
     matched_content_length = 0
     
-    # If we found H1s in both, align them
-    if draft_h1_index != -1 and live_h1_index != -1:
-        # Create aligned blocks with proper spacing
-        aligned = []
-        
-        # Add draft blocks before H1 as unmatched
-        for i in range(draft_h1_index):
-            aligned.append(("missing", draft_blocks[i], ""))
-        
-        # Add live blocks before H1 as current
-        for i in range(live_h1_index):
-            aligned.append(("current", "", live_blocks[i]))
-        
-        # Now match the remaining blocks starting from H1
-        draft_blocks = draft_blocks[draft_h1_index:]
-        live_blocks = live_blocks[live_h1_index:]
-    
-    # First pass: try to match complete paragraphs
+    # Initialize aligned results list
+    aligned = []
     matched_live = set()
-    if 'aligned' not in locals():
-        aligned = []
+
+    def is_heading(text):
+        return any(text.startswith(f'<h{i}>') for i in range(1, 7))
+
+    def get_content_type(text):
+        if text.startswith('Page Name:'):
+            return 'page_name'
+        elif text.startswith('Internal Reference:'):
+            return 'internal_ref'
+        elif text.startswith('Page Link:'):
+            return 'page_link'
+        elif text.startswith('Meta Title:'):
+            return 'meta_title'
+        elif text.startswith('Meta Description:'):
+            return 'meta_desc'
+        elif is_heading(text):
+            return 'heading'
+        return 'content'
+
+    def calculate_similarity(text1, text2):
+        type1 = get_content_type(text1)
+        type2 = get_content_type(text2)
+        
+        # If types don't match, they're not similar
+        if type1 != type2:
+            return 0.0
+        
+        # For headings and metadata, require exact matches after stripping HTML tags
+        if type1 in ['heading', 'page_name', 'internal_ref', 'page_link', 'meta_title', 'meta_desc']:
+            # Strip HTML tags for comparison
+            clean1 = re.sub(r'<[^>]+>', '', text1)
+            clean2 = re.sub(r'<[^>]+>', '', text2)
+            
+            # For page names and headings, strip the prefix
+            if type1 in ['page_name', 'heading']:
+                clean1 = clean1.replace('Page Name:', '').strip()
+                clean2 = clean2.replace('Page Name:', '').strip()
+            
+            # Exact match required for these types
+            return 1.0 if clean1 == clean2 else 0.0
+        
+        # For regular content, use sequence matcher with high threshold
+        return difflib.SequenceMatcher(None, text1, text2).ratio()
     
-    for db in draft_blocks:
+    # First pass: try to match blocks with high similarity
+    for i, db in enumerate(draft_blocks):
         best_match = None
         best_score = 0
+        best_index = -1
         
-        # Try to find the best matching block
-        for lb in live_blocks:
+        # Try to find the best matching block in live content
+        for j, lb in enumerate(live_blocks):
             if lb in matched_live:
                 continue
-            score = difflib.SequenceMatcher(None, db, lb).ratio()
+            
+            score = calculate_similarity(db, lb)
             if score > best_score:
                 best_score = score
                 best_match = lb
+                best_index = j
         
         # If we have a good match, use it
         if best_score >= similarity_threshold:
             matched_live.add(best_match)
+            # Add any unmatched live blocks that come before this match
+            for k in range(best_index):
+                if live_blocks[k] not in matched_live:
+                    # Check if this block has higher similarity with any upcoming draft blocks
+                    future_match = False
+                    for future_db in draft_blocks[i+1:]:
+                        future_score = calculate_similarity(future_db, live_blocks[k])
+                        if future_score >= similarity_threshold:
+                            future_match = True
+                            break
+                    if not future_match:
+                        aligned.append(("current", "", live_blocks[k]))
+                        matched_live.add(live_blocks[k])
+            
             aligned.append(("matched", db, best_match))
-            # Add the matched content length weighted by the match score
             matched_content_length += len(db) * best_score
         else:
-            # If no good match, try to find partial matches
+            # If no good match, check for partial matches
             partial_matches = []
             partial_match_length = 0
-            for lb in live_blocks:
-                if lb in matched_live:
-                    continue
-                # Split the live block into sentences
-                live_sentences = [s.strip() for s in lb.split('.') if s.strip()]
-                draft_sentences = [s.strip() for s in db.split('.') if s.strip()]
-                
-                # Check if any sentences match
-                for ds in draft_sentences:
-                    for ls in live_sentences:
-                        match_score = difflib.SequenceMatcher(None, ds, ls).ratio()
-                        if match_score > 0.8:  # Lower threshold for partial matches
-                            partial_matches.append((ds, ls))
-                            partial_match_length += len(ds) * match_score
+            best_partial_index = -1
+            
+            # Skip partial matching for headings and metadata
+            if get_content_type(db) not in ['heading', 'page_name', 'internal_ref', 'page_link', 'meta_title', 'meta_desc']:
+                for j, lb in enumerate(live_blocks):
+                    if lb in matched_live:
+                        continue
+                    # Skip partial matching if types don't match
+                    if get_content_type(db) != get_content_type(lb):
+                        continue
+                    
+                    # Split into sentences and check for partial matches
+                    live_sentences = [s.strip() for s in lb.split('.') if s.strip()]
+                    draft_sentences = [s.strip() for s in db.split('.') if s.strip()]
+                    
+                    sentence_matches = []
+                    for ds in draft_sentences:
+                        for ls in live_sentences:
+                            match_score = difflib.SequenceMatcher(None, ds, ls).ratio()
+                            if match_score > 0.8:  # Lower threshold for partial matches
+                                sentence_matches.append((ds, ls, match_score))
+                                partial_match_length += len(ds) * match_score
+                    
+                    if sentence_matches:
+                        partial_matches.extend(sentence_matches)
+                        if best_partial_index == -1:
+                            best_partial_index = j
             
             if partial_matches:
-                # Combine partial matches into a single block
+                # Add any unmatched live blocks that come before this partial match
+                for k in range(best_partial_index):
+                    if live_blocks[k] not in matched_live:
+                        aligned.append(("current", "", live_blocks[k]))
+                        matched_live.add(live_blocks[k])
+                
+                # Combine partial matches
                 combined_live = " ".join(m[1] for m in partial_matches)
                 matched_live.add(combined_live)
                 aligned.append(("matched", db, combined_live))
                 matched_content_length += partial_match_length
             else:
-                aligned.append(("missing", db, best_match if best_match else ""))
-
-    # Add any unmatched live blocks
-    for lb in live_blocks:
+                aligned.append(("missing", db, ""))
+    
+    # Add any remaining unmatched live blocks at their relative positions
+    for i, lb in enumerate(live_blocks):
         if lb not in matched_live:
-            aligned.append(("current", "", lb))
-
-    # Calculate the weighted similarity score with more emphasis on matched content
+            # Try to find the best position based on similarity with surrounding content
+            best_pos = len(aligned)
+            best_context_score = 0
+            
+            for pos in range(len(aligned) + 1):
+                context_score = 0
+                # Check similarity with previous block
+                if pos > 0:
+                    prev_content = aligned[pos-1][1] or aligned[pos-1][2]  # Use draft or live content
+                    if prev_content:
+                        context_score += calculate_similarity(prev_content, lb)
+                
+                # Check similarity with next block
+                if pos < len(aligned):
+                    next_content = aligned[pos][1] or aligned[pos][2]  # Use draft or live content
+                    if next_content:
+                        context_score += calculate_similarity(next_content, lb)
+                
+                if context_score > best_context_score:
+                    best_context_score = context_score
+                    best_pos = pos
+            
+            # Insert at best position
+            aligned.insert(best_pos, ("current", "", lb))
+    
+    # Calculate similarity score
     if total_draft_length == 0 or total_live_length == 0:
         similarity = 0.0
     else:
-        # Calculate individual similarities
         draft_similarity = matched_content_length / total_draft_length
         live_similarity = matched_content_length / total_live_length
-        
-        # Use the higher similarity score to give more weight to matched content
-        # Also consider the ratio of matched blocks to total blocks
         matched_blocks = sum(1 for tag, _, _ in aligned if tag == "matched")
         total_blocks = len(aligned)
         block_similarity = matched_blocks / total_blocks if total_blocks > 0 else 0
-        
-        # Combine the content similarity and block similarity
         similarity = max(draft_similarity, live_similarity) * 0.7 + block_similarity * 0.3
     
-    # Return both the alignment results and the calculated similarity score
     return aligned, similarity
 
 def format_result_as_html(docx_file, url, title, meta_desc, similarity, results):
@@ -409,61 +495,111 @@ def format_result_as_html(docx_file, url, title, meta_desc, similarity, results)
     else:
         report += "<p style='color: #dc3545;'>❌ Content is significantly different.</p>"
 
+    # Add CSS for flex container and content rows
+    report += """
+    <style>
+        .content-container {
+            display: flex;
+            margin-top: 20px;
+            gap: 20px;
+            align-items: stretch;
+        }
+        .column {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+        .content-blocks {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;  /* Add gap between blocks */
+        }
+        .content-row {
+            display: flex;
+            width: 100%;
+        }
+        .content-block {
+            width: 100%;
+            padding: 15px;  /* Increased padding */
+            box-sizing: border-box;
+            margin: 0;
+            line-height: 1.6;  /* Slightly increased line height */
+            border-radius: 4px;  /* Rounded corners */
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);  /* Subtle shadow */
+        }
+        .matched-content {
+            background-color: #e8f5e9;
+            border: 1px solid #c8e6c9;  /* Subtle border */
+        }
+        .missing-content {
+            background-color: #ffebee;
+            border: 1px solid #ffcdd2;  /* Subtle border */
+        }
+        .current-content {
+            background-color: #e3f2fd;
+            border: 1px solid #bbdefb;  /* Subtle border */
+        }
+        .placeholder {
+            border: 1px dashed #ddd;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-style: italic;
+            color: #666;
+            text-align: center;
+            padding: 20px;
+            background-color: #fafafa;  /* Light background */
+        }
+        .content-pair {
+            display: flex;
+            min-height: fit-content;
+        }
+    </style>
+    """
+
     # Start the two-column layout
-    report += "<div style='display: flex; margin-top: 20px; gap: 20px;'>"
+    report += "<div class='content-container'>"
     
     # Draft content column
-    report += "<div style='flex: 1;'>"
+    report += "<div class='column'>"
     report += "<h3>Draft Content</h3>"
-    report += "<div style='border: 1px solid #ddd; padding: 10px;'>"
+    report += "<div class='content-blocks'>"
     
     # Live content column
-    live_column = "<div style='flex: 1;'>"
+    live_column = "<div class='column'>"
     live_column += "<h3>Live Content</h3>"
-    live_column += "<div style='border: 1px solid #ddd; padding: 10px;'>"
+    live_column += "<div class='content-blocks'>"
 
-    # Track positions for live content
-    live_content = {}
-    current_pos = 0
-    
-    # First pass: Map positions of matched content
+    # Process results in their original order
     for tag, draft, live in results:
+        # Calculate content length and approximate line count
         if tag == "matched":
-            live_content[current_pos] = (tag, draft, live)
-        current_pos += 1
-
-    # Second pass: Add missing and current content
-    for tag, draft, live in results:
-        if tag == "missing":
-            live_content[current_pos] = (tag, draft, None)
-        elif tag == "current":
-            # Find the next available position
-            while current_pos in live_content:
-                current_pos += 1
-            live_content[current_pos] = (tag, None, live)
-        current_pos += 1
-
-    # Generate the HTML with proper positioning
-    draft_html = []
-    live_html = []
-    
-    for pos in sorted(live_content.keys()):
-        tag, draft, live = live_content[pos]
-        if tag == "matched":
-            draft_html.append(f"<div style='background-color: #e8f5e9; padding: 10px; margin-bottom: 10px;'>{draft}</div>")
-            live_html.append(f"<div style='background-color: #e8f5e9; padding: 10px; margin-bottom: 10px;'>{live}</div>")
+            content_length = max(len(draft), len(live))
+            line_count = max(draft.count('\n') + 1, live.count('\n') + 1)
+            min_height = max(50, (content_length // 50 + line_count) * 24)  # 24px per line of text
+            report += f"<div class='content-block matched-content' style='min-height: {min_height}px'>{draft}</div>"
+            live_column += f"<div class='content-block matched-content' style='min-height: {min_height}px'>{live}</div>"
         elif tag == "missing":
-            draft_html.append(f"<div style='background-color: #ffebee; padding: 10px; margin-bottom: 10px;'>{draft}</div>")
-            live_html.append("<div style='padding: 10px; margin-bottom: 10px; border: 1px dashed #ddd;'><em>Content missing from live site</em></div>")
+            content_length = len(draft)
+            line_count = draft.count('\n') + 1
+            min_height = max(50, (content_length // 50 + line_count) * 24)
+            report += f"<div class='content-block missing-content' style='min-height: {min_height}px'>{draft}</div>"
+            live_column += f"<div class='content-block placeholder' style='min-height: {min_height}px'><em>Content missing from live site</em></div>"
         elif tag == "current":
-            draft_html.append("<div style='padding: 10px; margin-bottom: 10px; border: 1px dashed #ddd;'><em>Content not in draft</em></div>")
-            live_html.append(f"<div style='background-color: #e3f2fd; padding: 10px; margin-bottom: 10px;'>{live}</div>")
+            content_length = len(live)
+            line_count = live.count('\n') + 1
+            min_height = max(50, (content_length // 50 + line_count) * 24)
+            report += f"<div class='content-block placeholder' style='min-height: {min_height}px'><em>Content not in draft</em></div>"
+            live_column += f"<div class='content-block current-content' style='min-height: {min_height}px'>{live}</div>"
 
-    # Add the content to the columns
-    report += "".join(draft_html) + "</div></div>"  # Close draft column
-    report += live_column + "".join(live_html) + "</div></div>"  # Add and close live column
+    # Close the columns
+    report += "</div></div>"  # Close draft column
+    live_column += "</div></div>"  # Close live column
     
-    report += "</div>"  # Close the flex container
+    # Add the live column and close the container
+    report += live_column + "</div>"
+    
     return report
 
 def format_result_as_markdown(docx_file, url, title, meta_desc, similarity, results):
