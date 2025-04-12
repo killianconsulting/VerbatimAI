@@ -8,14 +8,22 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 import sys
 import webbrowser
+import shutil
+
+# Try to import tkinterdnd2, fall back to regular tkinter if not available
+try:
+    import tkinterdnd2 as tkdnd
+    USE_DND = True
+except ImportError:
+    USE_DND = False
 
 # ------------------ Helper Functions ------------------
 
-def get_document_url_pairs(docx_files):
-    match_window = tk.Toplevel()
+def get_document_url_pairs(docx_files, parent_window):
+    match_window = tk.Toplevel(parent_window)
     match_window.title("Match DOCX Files to URLs")
-    window_width = 1200  # Adjusted for full field sizes
-    window_height = 400  # Reduced height only
+    window_width = 1200
+    window_height = 400
     
     # Calculate screen center
     screen_width = match_window.winfo_screenwidth()
@@ -23,6 +31,10 @@ def get_document_url_pairs(docx_files):
     x = (screen_width - window_width) // 2
     y = (screen_height - window_height) // 2
     match_window.geometry(f"{window_width}x{window_height}+{x}+{y}")
+    
+    # Make window modal
+    match_window.transient(parent_window)
+    match_window.grab_set()
     
     entries = []
     canvas = tk.Canvas(match_window)
@@ -37,28 +49,31 @@ def get_document_url_pairs(docx_files):
     for file in docx_files:
         frame = tk.Frame(scroll_frame)
         frame.pack(fill="x", padx=10, pady=5)
-        tk.Label(frame, text=file, width=80, anchor="w").pack(side="left")  # Back to original width
-        url_entry = tk.Entry(frame, width=100)  # Back to original width
+        tk.Label(frame, text=file, width=80, anchor="w").pack(side="left")
+        url_entry = tk.Entry(frame, width=100)
         url_entry.pack(side="left", padx=5, fill="x", expand=True)
         entries.append((file, url_entry))
 
     matched_pairs = []
 
     def submit():
+        nonlocal matched_pairs
         for filename, entry in entries:
             url = entry.get().strip()
             if not url:
                 messagebox.showerror("Missing URL", f"Please enter a URL for {filename}")
                 return
             matched_pairs.append((filename, url))
+        match_window.grab_release()
         match_window.destroy()
 
-    submit_btn = tk.Button(scroll_frame, text="Submit Matches", command=submit)
+    submit_btn = tk.Button(scroll_frame, text="Start AutoCompare", command=submit)
     submit_btn.pack(pady=20)
 
     canvas.pack(side="left", fill="both", expand=True)
     scrollbar.pack(side="right", fill="y")
-    match_window.grab_set()
+    
+    # Wait for window to be destroyed
     match_window.wait_window()
     return matched_pairs
 
@@ -470,135 +485,194 @@ def block_compare(draft, live, similarity_threshold=0.9):
 def format_result_as_html(docx_file, url, title, meta_desc, similarity, results):
     # Add title and color key
     report = """
-    <div style='margin-bottom: 30px;'>
-        <h1 style='font-family: Roboto, Arial, sans-serif; font-size: 32px; font-weight: bold; margin: 0 0 20px 0;'>VerbatimAI</h1>
-        <div style='background: #f5f5f5; padding: 15px; border-radius: 5px; margin-bottom: 20px;'>
-            <strong>Color Key:</strong>
-            <ul style='margin: 10px 0; padding-left: 20px;'>
-                <li><span style='color: #28a745;'>Green</span> - Content matches between draft and live site</li>
-                <li><span style='color: #dc3545;'>Red</span> - Content in draft but missing from live site</li>
-                <li><span style='color: #007bff;'>Blue</span> - Content on live site but not in draft</li>
-            </ul>
+    <div class='report-container'>
+        <div class='header'>
+            <h1>Verbatim AI Content Comparison</h1>
+            <div class='color-key'>
+                <strong>Color Key:</strong>
+                <ul>
+                    <li><span class='matched-text'>Green</span> - Content matches between draft and live site</li>
+                    <li><span class='missing-text'>Red</span> - Content in draft but missing from live site</li>
+                    <li><span class='current-text'>Blue</span> - Content on live site but not in draft</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class='page-info'>
+            <h2>Document Comparison</h2>
+            <p><strong>Document:</strong> {docx_file}</p>
+            <p><strong>URL:</strong> <a href='{url}' target='_blank'>{url}</a></p>
+            <p><strong>Page Title:</strong> {title}</p>
+            <p><strong>Meta Description:</strong> {meta_desc}</p>
+            <p><strong>Similarity Score:</strong> {similarity:.2%}</p>
+            {similarity_indicator}
+        </div>
+
+        <div class='content-comparison'>
+            <div class='column-headers'>
+                <h3>Draft Content</h3>
+                <h3>Live Content</h3>
+            </div>
+            <div class='content-container'>
+    """.format(
+        docx_file=docx_file,
+        url=url,
+        title=title,
+        meta_desc=meta_desc,
+        similarity=similarity,
+        similarity_indicator="""
+            <p class='similarity-high' style='color: #28a745;'>✅ Content is mostly identical.</p>
+        """ if similarity > 0.95 else """
+            <p class='similarity-medium' style='color: #ffc107;'>⚠️ Content has minor differences.</p>
+        """ if similarity > 0.75 else """
+            <p class='similarity-low' style='color: #dc3545;'>❌ Content is significantly different.</p>
+        """
+    )
+
+    # Process each content block
+    for tag, draft, live in results:
+        report += "<div class='content-row'>"
+        
+        # Draft column
+        if tag == "matched":
+            report += f"<div class='content-block matched-content'>{draft}</div>"
+        elif tag == "missing":
+            report += f"<div class='content-block missing-content'>{draft}</div>"
+        else:  # current
+            report += "<div class='content-block placeholder'><em>Content not in draft</em></div>"
+        
+        # Live column
+        if tag == "matched":
+            report += f"<div class='content-block matched-content'>{live}</div>"
+        elif tag == "missing":
+            report += "<div class='content-block placeholder'><em>Content missing from live site</em></div>"
+        else:  # current
+            report += f"<div class='content-block current-content'>{live}</div>"
+        
+        report += "</div>"
+
+    # Close containers and add CSS
+    report += """
+            </div>
         </div>
     </div>
-    """
-    
-    report += f"<h2>{docx_file} vs <a href='{url}'>{url}</a></h2>"
-    report += f"<p><strong>Page Title:</strong> {title}</p>"
-    report += f"<p><strong>Meta Description:</strong> {meta_desc}</p>"
-    report += f"<p><strong>Similarity Score:</strong> {similarity:.2%}</p>"
-    
-    if similarity > 0.95:
-        report += "<p style='color: #28a745;'>✅ Content is mostly identical.</p>"
-    elif similarity > 0.75:
-        report += "<p style='color: #ffc107;'>⚠️ Content has minor differences.</p>"
-    else:
-        report += "<p style='color: #dc3545;'>❌ Content is significantly different.</p>"
-
-    # Add CSS for flex container and content rows
-    report += """
     <style>
+        body {
+            font-family: 'Roboto', Arial, sans-serif;
+            line-height: 1.6;
+            margin: 0;
+            padding: 20px;
+            background-color: #f8f9fa;
+        }
+        .report-container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .header {
+            margin-bottom: 30px;
+        }
+        .header h1 {
+            font-size: 32px;
+            margin: 0 0 20px 0;
+            color: #2c3e50;
+        }
+        .color-key {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+        .color-key ul {
+            list-style-type: none;
+            padding-left: 0;
+            margin: 10px 0;
+        }
+        .color-key li {
+            margin: 5px 0;
+        }
+        .matched-text { color: #28a745; }
+        .missing-text { color: #dc3545; }
+        .current-text { color: #007bff; }
+        .page-info {
+            margin-bottom: 30px;
+            padding: 20px;
+            background-color: #f8f9fa;
+            border-radius: 5px;
+        }
+        .page-info h2 {
+            margin-top: 0;
+            color: #2c3e50;
+        }
+        .page-info p {
+            margin: 10px 0;
+        }
+        .column-headers {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 15px;
+        }
+        .column-headers h3 {
+            flex: 1;
+            margin: 0;
+            padding: 10px;
+            background-color: #f8f9fa;
+            border-radius: 5px;
+            text-align: center;
+            color: #2c3e50;
+        }
         .content-container {
             display: flex;
-            margin-top: 20px;
-            gap: 20px;
-            align-items: stretch;
-        }
-        .column {
-            flex: 1;
-            display: flex;
             flex-direction: column;
-        }
-        .content-blocks {
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            gap: 10px;  /* Add gap between blocks */
+            gap: 15px;
         }
         .content-row {
             display: flex;
-            width: 100%;
+            gap: 15px;
+            min-height: fit-content;
         }
         .content-block {
-            width: 100%;
-            padding: 15px;  /* Increased padding */
-            box-sizing: border-box;
-            margin: 0;
-            line-height: 1.6;  /* Slightly increased line height */
-            border-radius: 4px;  /* Rounded corners */
-            box-shadow: 0 1px 3px rgba(0,0,0,0.1);  /* Subtle shadow */
+            flex: 1;
+            padding: 15px;
+            border-radius: 5px;
+            white-space: pre-wrap;
+            word-break: break-word;
+            min-height: 50px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
         }
         .matched-content {
             background-color: #e8f5e9;
-            border: 1px solid #c8e6c9;  /* Subtle border */
+            border: 1px solid #c8e6c9;
         }
         .missing-content {
             background-color: #ffebee;
-            border: 1px solid #ffcdd2;  /* Subtle border */
+            border: 1px solid #ffcdd2;
         }
         .current-content {
             background-color: #e3f2fd;
-            border: 1px solid #bbdefb;  /* Subtle border */
+            border: 1px solid #bbdefb;
         }
         .placeholder {
-            border: 1px dashed #ddd;
+            background-color: #f8f9fa;
+            border: 1px dashed #dee2e6;
             display: flex;
             align-items: center;
             justify-content: center;
             font-style: italic;
-            color: #666;
-            text-align: center;
-            padding: 20px;
-            background-color: #fafafa;  /* Light background */
+            color: #6c757d;
         }
-        .content-pair {
-            display: flex;
-            min-height: fit-content;
+        a {
+            color: #007bff;
+            text-decoration: none;
+        }
+        a:hover {
+            text-decoration: underline;
         }
     </style>
     """
-
-    # Start the two-column layout
-    report += "<div class='content-container'>"
-    
-    # Draft content column
-    report += "<div class='column'>"
-    report += "<h3>Draft Content</h3>"
-    report += "<div class='content-blocks'>"
-    
-    # Live content column
-    live_column = "<div class='column'>"
-    live_column += "<h3>Live Content</h3>"
-    live_column += "<div class='content-blocks'>"
-
-    # Process results in their original order
-    for tag, draft, live in results:
-        # Calculate content length and approximate line count
-        if tag == "matched":
-            content_length = max(len(draft), len(live))
-            line_count = max(draft.count('\n') + 1, live.count('\n') + 1)
-            min_height = max(50, (content_length // 50 + line_count) * 24)  # 24px per line of text
-            report += f"<div class='content-block matched-content' style='min-height: {min_height}px'>{draft}</div>"
-            live_column += f"<div class='content-block matched-content' style='min-height: {min_height}px'>{live}</div>"
-        elif tag == "missing":
-            content_length = len(draft)
-            line_count = draft.count('\n') + 1
-            min_height = max(50, (content_length // 50 + line_count) * 24)
-            report += f"<div class='content-block missing-content' style='min-height: {min_height}px'>{draft}</div>"
-            live_column += f"<div class='content-block placeholder' style='min-height: {min_height}px'><em>Content missing from live site</em></div>"
-        elif tag == "current":
-            content_length = len(live)
-            line_count = live.count('\n') + 1
-            min_height = max(50, (content_length // 50 + line_count) * 24)
-            report += f"<div class='content-block placeholder' style='min-height: {min_height}px'><em>Content not in draft</em></div>"
-            live_column += f"<div class='content-block current-content' style='min-height: {min_height}px'>{live}</div>"
-
-    # Close the columns
-    report += "</div></div>"  # Close draft column
-    live_column += "</div></div>"  # Close live column
-    
-    # Add the live column and close the container
-    report += live_column + "</div>"
     
     return report
 
@@ -628,104 +702,263 @@ def format_result_as_markdown(docx_file, url, title, meta_desc, similarity, resu
 
 # ------------------ Main Comparison Logic ------------------
 
-def run_batch_comparison():
-    folder = filedialog.askdirectory(title="Select Folder Containing Draft DOCX Files")
-    if not folder:
+def handle_drop(event):
+    """Handle dropped files or folders"""
+    data = event.data
+    if not data:
         return
-    docx_files = sorted([f for f in os.listdir(folder) if f.endswith(".docx")])
+        
+    # Remove curly braces if present
+    data = data.strip('{}')
+    
+    # Split multiple files
+    paths = data.split('} {')
+    
+    # Collect all DOCX files
+    docx_files = []
+    for path in paths:
+        if os.path.isdir(path):
+            # If it's a directory, find all DOCX files in it
+            docx_files.extend([
+                os.path.join(path, f) 
+                for f in os.listdir(path) 
+                if f.endswith('.docx')
+            ])
+        elif path.lower().endswith('.docx'):
+            # If it's a DOCX file, add it directly
+            docx_files.append(path)
+    
     if not docx_files:
-        messagebox.showerror("Error", "No .docx files found in the selected folder.")
+        messagebox.showerror("Error", "No .docx files found in the dropped items.")
         return
-    matches = get_document_url_pairs(docx_files)
+    
+    # Create a temporary folder for processing
+    first_file_dir = os.path.dirname(docx_files[0])
+    temp_folder = os.path.join(first_file_dir, "VerbatimAI_Comparison")
+    if not os.path.exists(temp_folder):
+        os.makedirs(temp_folder)
+    
+    # Process the files
+    process_files(temp_folder, docx_files)
+
+def run_batch_comparison(folder=None):
+    """Run comparison for files selected through folder, multiple files, or single file"""
+    if not folder:
+        # Create a custom dialog for selection method
+        selection_window = tk.Toplevel(root)
+        selection_window.title("Select Upload Method")
+        selection_window.geometry("400x200")
+        
+        # Make window modal
+        selection_window.transient(root)
+        selection_window.grab_set()
+        
+        # Center the window
+        window_width = 400
+        window_height = 200
+        screen_width = selection_window.winfo_screenwidth()
+        screen_height = selection_window.winfo_screenheight()
+        x = (screen_width - window_width) // 2
+        y = (screen_height - window_height) // 2
+        selection_window.geometry(f"{window_width}x{window_height}+{x}+{y}")
+
+        def select_folder():
+            selection_window.destroy()
+            folder_path = filedialog.askdirectory(title="Select Folder Containing Draft DOCX Files")
+            if folder_path:
+                process_files(folder_path)
+
+        def select_files():
+            selection_window.destroy()
+            files = filedialog.askopenfilenames(
+                title="Select DOCX Files",
+                filetypes=[("DOCX files", "*.docx"), ("All files", "*.*")]
+            )
+            if files:
+                # Create temporary folder for selected files
+                temp_folder = os.path.join(os.path.dirname(files[0]), "VerbatimAI_Comparison")
+                if not os.path.exists(temp_folder):
+                    os.makedirs(temp_folder)
+                
+                # Process selected files
+                process_files(temp_folder, files)
+
+        # Add descriptive labels and buttons
+        tk.Label(
+            selection_window,
+            text="Choose how you want to upload documents:",
+            font=("Roboto", 12)
+        ).pack(pady=20)
+
+        button_frame = ttk.Frame(selection_window)
+        button_frame.pack(fill='x', padx=20)
+
+        ttk.Button(
+            button_frame,
+            text="Select Folder",
+            command=select_folder
+        ).pack(fill='x', pady=5)
+        
+        ttk.Label(
+            button_frame,
+            text="Upload an entire folder of DOCX files",
+            foreground='gray'
+        ).pack()
+
+        ttk.Button(
+            button_frame,
+            text="Select Files",
+            command=select_files
+        ).pack(fill='x', pady=(15,5))
+        
+        ttk.Label(
+            button_frame,
+            text="Choose one or multiple DOCX files",
+            foreground='gray'
+        ).pack()
+
+        return
+
+    process_files(folder)
+
+def process_files(folder, specific_files=None):
+    """Process the selected files for comparison"""
+    # Get DOCX files based on selection method
+    if specific_files:
+        docx_files = [os.path.basename(f) for f in specific_files]
+        # Copy selected files to the temporary folder
+        for file in specific_files:
+            dest = os.path.join(folder, os.path.basename(file))
+            if os.path.abspath(file) != os.path.abspath(dest):
+                shutil.copy2(file, dest)
+    else:
+        docx_files = sorted([f for f in os.listdir(folder) if f.endswith(".docx")])
+
+    if not docx_files:
+        messagebox.showerror("Error", "No .docx files found in the selected location.")
+        return
+
+    # Create URL matching window
+    matches = get_document_url_pairs(docx_files, root)
     if not matches:
         return
-    total = len(matches)
-    progress_bar["maximum"] = total
-    progress_bar["value"] = 0
-    report_md = "# Batch Comparison Report\n\n"
-    summary = []
-    for i, (docx_file, url) in enumerate(matches, start=1):
-        full_path = os.path.join(folder, docx_file)
-        try:
-            draft_text = normalize_text(get_docx_text(full_path))
-            live_text, title, meta_desc = get_webpage_text(url)
-            live_text = normalize_text(live_text)
-            if "[ERROR" in live_text:
-                report_md += f"## {docx_file} vs {url}\n❌ {live_text}\n\n"
+
+    # Disable the main window's drop target while processing
+    if USE_DND:
+        drop_target.drop_target_unregister()
+
+    try:
+        total = len(matches)
+        progress_bar["maximum"] = total
+        progress_bar["value"] = 0
+        report_md = "# Batch Comparison Report\n\n"
+        summary = []
+        
+        for i, (docx_file, url) in enumerate(matches, start=1):
+            try:
+                full_path = os.path.join(folder, docx_file)
+                draft_text = normalize_text(get_docx_text(full_path))
+                live_text, title, meta_desc = get_webpage_text(url)
+                live_text = normalize_text(live_text)
+                
+                if "[ERROR" in live_text:
+                    report_md += f"## {docx_file} vs {url}\n❌ {live_text}\n\n"
+                    summary.append(f"❌ {url}: Error")
+                    continue
+                
+                diff, similarity = block_compare(draft_text, live_text)
+                
+                # Generate reports
+                html_report = format_result_as_html(docx_file, url, title, meta_desc, similarity, diff)
+                markdown_report = format_result_as_markdown(docx_file, url, title, meta_desc, similarity, diff)
+                
+                # Save HTML report
+                html_file_path = os.path.join(folder, f"report_{i}_{os.path.splitext(docx_file)[0]}.html")
+                with open(html_file_path, "w", encoding="utf-8") as f:
+                    f.write(f"""<!DOCTYPE html>
+                    <html>
+                        <head>
+                            <meta charset='UTF-8'>
+                            <title>Verbatim AI - Comparison Report</title>
+                            <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap" rel="stylesheet">
+                            <style>
+                                body {{ 
+                                    font-family: Roboto, Arial, sans-serif; 
+                                    margin: 20px;
+                                    line-height: 1.6;
+                                }}
+                                h1 {{ 
+                                    font-size: 32px; 
+                                    font-weight: bold; 
+                                    margin: 0 0 20px 0;
+                                }}
+                                .color-key {{
+                                    background: #f5f5f5;
+                                    padding: 15px;
+                                    border-radius: 5px;
+                                    margin-bottom: 20px;
+                                }}
+                                .color-key ul {{
+                                    margin: 10px 0;
+                                    padding-left: 20px;
+                                }}
+                                .matched {{
+                                    background-color: #e8f5e9;
+                                }}
+                                .missing {{
+                                    background-color: #ffebee;
+                                }}
+                                .current {{
+                                    background-color: #e3f2fd;
+                                }}
+                                .placeholder {{
+                                    border: 1px dashed #ddd;
+                                    color: #666;
+                                    font-style: italic;
+                                }}
+                            </style>
+                        </head>
+                        <body>{html_report}</body>
+                    </html>""")
+                
+                report_md += markdown_report
+                summary.append(f"{url} → Similarity: {similarity:.2%}")
+                
+            except Exception as e:
+                report_md += f"## {docx_file} vs {url}\n❌ Error: {str(e)}\n\n"
                 summary.append(f"❌ {url}: Error")
-                continue
             
-            # Get both alignment results and similarity score from block_compare
-            diff, similarity = block_compare(draft_text, live_text)
-            
-            html_report = format_result_as_html(docx_file, url, title, meta_desc, similarity, diff)
-            markdown_report = format_result_as_markdown(docx_file, url, title, meta_desc, similarity, diff)
-
-            html_file_path = os.path.join(folder, f"report_{i}_{os.path.splitext(docx_file)[0]}.html")
-            with open(html_file_path, "w", encoding="utf-8") as f:
-                f.write(f"""<html>
-                    <head>
-                        <meta charset='UTF-8'>
-                        <title>VerbatimAI - Comparison Report</title>
-                        <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap" rel="stylesheet">
-                        <style>
-                            body {{ 
-                                font-family: Roboto, Arial, sans-serif; 
-                                margin: 20px;
-                                line-height: 1.6;
-                            }}
-                            h1 {{ 
-                                font-size: 32px; 
-                                font-weight: bold; 
-                                margin: 0 0 20px 0;
-                            }}
-                            .color-key {{
-                                background: #f5f5f5;
-                                padding: 15px;
-                                border-radius: 5px;
-                                margin-bottom: 20px;
-                            }}
-                            .color-key ul {{
-                                margin: 10px 0;
-                                padding-left: 20px;
-                            }}
-                            .matched {{
-                                background-color: #e8f5e9;
-                            }}
-                            .missing {{
-                                background-color: #ffebee;
-                            }}
-                            .current {{
-                                background-color: #e3f2fd;
-                            }}
-                            .placeholder {{
-                                border: 1px dashed #ddd;
-                                color: #666;
-                                font-style: italic;
-                            }}
-                        </style>
-                    </head>
-                    <body>{html_report}</body>
-                </html>""")
-            if i == total:
-                # Open the folder instead of the HTML file
-                os.startfile(folder)
-
-            report_md += markdown_report
-            summary.append(f"{url} → Similarity: {similarity:.2%}")
-
-        except Exception as e:
-            report_md += f"## {docx_file} vs {url}\n❌ Error: {str(e)}\n\n"
-            summary.append(f"❌ {url}: Error")
-        progress_bar["value"] = i
-        root.update_idletasks()
-    md_path = os.path.join(folder, "comparison_report.md")
-    with open(md_path, "w", encoding="utf-8") as f:
-        f.write(report_md)
-    text_area.delete(1.0, tk.END)
-    text_area.insert(tk.END, "Reports saved.\n\n" + "\n".join(summary))
-    messagebox.showinfo("Done", f"✅ Batch comparison complete.\nMarkdown saved to:\n{md_path}\nHTML reports saved alongside each docx.")
-    progress_bar["value"] = 0
+            progress_bar["value"] = i
+            root.update_idletasks()
+        
+        # Save markdown report
+        md_path = os.path.join(folder, "comparison_report.md")
+        with open(md_path, "w", encoding="utf-8") as f:
+            f.write(report_md)
+        
+        # Store current report for saving later
+        root.current_report_md = report_md
+        
+        # Update GUI
+        text_area.delete(1.0, tk.END)
+        text_area.insert(tk.END, "Reports saved.\n\n" + "\n".join(summary))
+        
+        # Show completion message
+        messagebox.showinfo("Done", f"✅ Batch comparison complete.\nMarkdown saved to:\n{md_path}\nHTML reports saved alongside each docx.")
+        progress_bar["value"] = 0
+        
+        # Open the results folder
+        os.startfile(folder)
+        
+    except Exception as e:
+        messagebox.showerror("Error", f"An error occurred during comparison: {str(e)}")
+        progress_bar["value"] = 0
+    
+    finally:
+        # Re-enable the drop target
+        if USE_DND:
+            drop_target.drop_target_register(tkdnd.DND_FILES)
+            drop_target.dnd_bind('<<Drop>>', handle_drop)
 
 # ------------------ GUI Setup ------------------
 
@@ -738,9 +971,328 @@ def resource_path(relative_path):
         base_path = os.path.abspath(".")
     return os.path.join(base_path, relative_path)
 
+def get_last_report_location():
+    """Get the most recent report location"""
+    if hasattr(root, 'last_report_location') and os.path.exists(root.last_report_location):
+        return root.last_report_location
+    settings = load_settings()
+    if settings['default_save_location'] and os.path.exists(settings['default_save_location']):
+        return settings['default_save_location']
+    return os.getcwd()
+
+def open_report():
+    """Open an existing HTML or Markdown report"""
+    initial_dir = get_last_report_location()
+    
+    filetypes = [
+        ("Report files", "*.html;*.md"),
+        ("HTML files", "*.html"),
+        ("Markdown files", "*.md"),
+        ("All files", "*.*")
+    ]
+    
+    filename = filedialog.askopenfilename(
+        title="Open Report",
+        filetypes=filetypes,
+        initialdir=initial_dir
+    )
+    if filename:
+        # Store the directory for next time
+        root.last_report_location = os.path.dirname(filename)
+        webbrowser.open(filename)
+
+def save_report():
+    """Save the current comparison results"""
+    if not hasattr(root, 'current_report_md'):
+        messagebox.showinfo("No Report", "No comparison results to save. Please run a comparison first.")
+        return
+    
+    filetypes = [
+        ("Markdown files", "*.md"),
+        ("HTML files", "*.html"),
+        ("All files", "*.*")
+    ]
+    
+    initial_dir = get_last_report_location()
+    
+    filename = filedialog.asksaveasfilename(
+        title="Save Report",
+        filetypes=filetypes,
+        defaultextension=".md",
+        initialdir=initial_dir
+    )
+    if filename:
+        try:
+            with open(filename, 'w', encoding='utf-8') as f:
+                f.write(root.current_report_md)
+            # Store the directory for next time
+            root.last_report_location = os.path.dirname(filename)
+            messagebox.showinfo("Success", "Report saved successfully!")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to save report: {str(e)}")
+
+def save_settings(settings):
+    """Save settings to a file"""
+    settings_dir = os.path.join(os.path.dirname(__file__), "config")
+    if not os.path.exists(settings_dir):
+        os.makedirs(settings_dir)
+    
+    settings_file = os.path.join(settings_dir, "settings.txt")
+    with open(settings_file, 'w') as f:
+        for key, value in settings.items():
+            f.write(f"{key}={value}\n")
+
+def load_settings():
+    """Load settings from file"""
+    # Get default Downloads folder path
+    downloads_path = os.path.join(os.path.expanduser('~'), 'Downloads')
+    
+    settings = {
+        'default_save_location': downloads_path,
+        'similarity_threshold': '0.9'
+    }
+    
+    settings_file = os.path.join(os.path.dirname(__file__), "config", "settings.txt")
+    if os.path.exists(settings_file):
+        with open(settings_file, 'r') as f:
+            for line in f:
+                if '=' in line:
+                    key, value = line.strip().split('=', 1)
+                    # Only update if the value is not empty and the path exists (for save location)
+                    if value and (key != 'default_save_location' or os.path.exists(value)):
+                        settings[key] = value
+    
+    return settings
+
+def show_settings():
+    """Show settings/preferences dialog"""
+    settings_window = tk.Toplevel(root)
+    settings_window.title("Settings")
+    settings_window.geometry("500x400")
+    
+    # Make window modal
+    settings_window.transient(root)
+    settings_window.grab_set()
+    
+    # Center the window
+    window_width = 500
+    window_height = 400
+    screen_width = settings_window.winfo_screenwidth()
+    screen_height = settings_window.winfo_screenheight()
+    x = (screen_width - window_width) // 2
+    y = (screen_height - window_height) // 2
+    settings_window.geometry(f"{window_width}x{window_height}+{x}+{y}")
+    
+    # Create notebook for tabbed interface
+    notebook = ttk.Notebook(settings_window)
+    notebook.pack(fill='both', expand=True, padx=10, pady=10)
+    
+    # General Settings tab
+    general_frame = ttk.Frame(notebook)
+    notebook.add(general_frame, text='General')
+    
+    # Comparison Settings tab
+    comparison_frame = ttk.Frame(notebook)
+    notebook.add(comparison_frame, text='Comparison')
+    
+    # Load current settings
+    current_settings = load_settings()
+    
+    # Add settings controls
+    ttk.Label(general_frame, text="Default Save Location:").pack(anchor='w', padx=10, pady=5)
+    save_location = ttk.Entry(general_frame)
+    save_location.pack(fill='x', padx=10)
+    if current_settings['default_save_location']:
+        save_location.insert(0, current_settings['default_save_location'])
+    
+    def browse_save_location():
+        folder = filedialog.askdirectory(title="Select Default Save Location")
+        if folder:
+            save_location.delete(0, tk.END)
+            save_location.insert(0, folder)
+    
+    ttk.Button(general_frame, text="Browse...", command=browse_save_location).pack(anchor='w', padx=10)
+    
+    ttk.Label(comparison_frame, text="Similarity Threshold:").pack(anchor='w', padx=10, pady=5)
+    similarity_scale = ttk.Scale(comparison_frame, from_=0.5, to=1.0, orient='horizontal')
+    similarity_scale.set(float(current_settings['similarity_threshold']))
+    similarity_scale.pack(fill='x', padx=10)
+    
+    def save_and_close():
+        # Save settings
+        new_settings = {
+            'default_save_location': save_location.get(),
+            'similarity_threshold': str(similarity_scale.get())
+        }
+        save_settings(new_settings)
+        settings_window.destroy()
+    
+    def cancel():
+        settings_window.destroy()
+    
+    # Add buttons
+    button_frame = ttk.Frame(settings_window)
+    button_frame.pack(fill='x', padx=10, pady=10)
+    ttk.Button(button_frame, text="Save", command=save_and_close).pack(side='right', padx=5)
+    ttk.Button(button_frame, text="Cancel", command=cancel).pack(side='right', padx=5)
+
+def copy_results():
+    """Copy the current results to clipboard"""
+    if not text_area.get(1.0, tk.END).strip():
+        messagebox.showinfo("No Results", "No results to copy. Please run a comparison first.")
+        return
+    root.clipboard_clear()
+    root.clipboard_append(text_area.get(1.0, tk.END))
+    root.update()
+
+def clear_all():
+    """Clear all results and reset the interface"""
+    if text_area.get(1.0, tk.END).strip():
+        if messagebox.askyesno("Clear All", "Are you sure you want to clear all results?"):
+            text_area.delete(1.0, tk.END)
+            progress_bar["value"] = 0
+            if hasattr(root, 'current_report_md'):
+                delattr(root, 'current_report_md')
+
+def show_documentation():
+    """Show the documentation in the default web browser"""
+    docs_dir = os.path.join(os.path.dirname(__file__), "docs")
+    docs_path = os.path.join(docs_dir, "html_report_guide.md")
+    
+    # Create docs directory if it doesn't exist
+    if not os.path.exists(docs_dir):
+        os.makedirs(docs_dir)
+    
+    # Create documentation file if it doesn't exist
+    if not os.path.exists(docs_path):
+        with open(docs_path, 'w', encoding='utf-8') as f:
+            f.write("""# Verbatim AI Documentation
+
+## Overview
+Verbatim AI is a powerful tool for comparing draft content with live website content. This guide will help you understand how to use the application effectively.
+
+## Getting Started
+1. Launch Verbatim AI
+2. Click "Upload Documents" or drag and drop DOCX files
+3. Enter the corresponding URLs for each document
+4. Click "Start AutoCompare" to begin the comparison
+
+## Understanding the Reports
+- Green: Content matches between draft and live site
+- Red: Content in draft but missing from live site
+- Blue: Content on live site but not in draft
+
+## Features
+- Batch processing of multiple documents
+- Side-by-side comparison view
+- Similarity scoring
+- Export options (HTML and Markdown)
+- Keyboard shortcuts
+
+## Keyboard Shortcuts
+- Ctrl+N: New Comparison
+- Ctrl+O: Open Report
+- Ctrl+S: Save Report
+- Ctrl+C: Copy Results
+- Ctrl+Delete: Clear All
+- F1: Open Documentation
+- Alt+F4: Exit
+
+## Support
+For additional support or to report issues, please contact the SMB Team.
+
+© 2025 SMB Team. All rights reserved.""")
+    
+    webbrowser.open(f"file://{docs_path}")
+
+def show_about():
+    """Show the About dialog"""
+    about_window = tk.Toplevel(root)
+    about_window.title("About Verbatim AI")
+    about_window.geometry("400x300")
+    
+    # Make window modal
+    about_window.transient(root)
+    about_window.grab_set()
+    
+    # Center the window
+    window_width = 400
+    window_height = 300
+    screen_width = about_window.winfo_screenwidth()
+    screen_height = about_window.winfo_screenheight()
+    x = (screen_width - window_width) // 2
+    y = (screen_height - window_height) // 2
+    about_window.geometry(f"{window_width}x{window_height}+{x}+{y}")
+    
+    # Add logo if available
+    try:
+        logo_path = resource_path('smbteam-logo.png')
+        logo_image = tk.PhotoImage(file=logo_path)
+        # Resize the image to a reasonable size
+        logo_image = logo_image.subsample(3, 3)
+        logo_label = tk.Label(about_window, image=logo_image)
+        logo_label.image = logo_image
+        logo_label.pack(pady=10)
+    except Exception:
+        pass
+    
+    # Add version and copyright information
+    tk.Label(about_window, text="Verbatim AI", font=("Roboto", 16, "bold")).pack(pady=5)
+    tk.Label(about_window, text="Version 1.0.0").pack()
+    tk.Label(about_window, text="© 2025 SMB Team. All rights reserved.").pack(pady=5)
+    tk.Label(about_window, text="A powerful tool for comparing draft content\nwith live website content.", justify=tk.CENTER).pack(pady=10)
+    
+    # Add close button
+    ttk.Button(about_window, text="Close", command=about_window.destroy).pack(pady=10)
+
 if __name__ == "__main__":
-    root = tk.Tk()
-    root.title("VerbatimAI")
+    # Use tkdnd.Tk if available, otherwise use regular tk.Tk
+    root = tkdnd.Tk() if USE_DND else tk.Tk()
+    root.title("Verbatim AI")
+
+    # Create menu bar
+    menubar = tk.Menu(root)
+    root.config(menu=menubar)
+
+    # Create File menu
+    file_menu = tk.Menu(menubar, tearoff=0)
+    menubar.add_cascade(label="File", menu=file_menu)
+    
+    # Add File menu items
+    file_menu.add_command(label="New Comparison", command=run_batch_comparison, accelerator="Ctrl+N")
+    file_menu.add_command(label="Open Report", command=open_report, accelerator="Ctrl+O")
+    file_menu.add_command(label="Save Report", command=save_report, accelerator="Ctrl+S")
+    file_menu.add_separator()
+    file_menu.add_command(label="Settings", command=show_settings, accelerator="Ctrl+,")
+    file_menu.add_separator()
+    file_menu.add_command(label="Exit", command=root.quit, accelerator="Alt+F4")
+
+    # Create Edit menu
+    edit_menu = tk.Menu(menubar, tearoff=0)
+    menubar.add_cascade(label="Edit", menu=edit_menu)
+    
+    # Add Edit menu items
+    edit_menu.add_command(label="Copy Results", command=copy_results, accelerator="Ctrl+C")
+    edit_menu.add_separator()
+    edit_menu.add_command(label="Clear All", command=clear_all, accelerator="Ctrl+Delete")
+
+    # Create Help menu
+    help_menu = tk.Menu(menubar, tearoff=0)
+    menubar.add_cascade(label="Help", menu=help_menu)
+    
+    # Add Help menu items
+    help_menu.add_command(label="Documentation", command=show_documentation, accelerator="F1")
+    help_menu.add_separator()
+    help_menu.add_command(label="About Verbatim AI", command=show_about)
+
+    # Bind keyboard shortcuts
+    root.bind("<Control-n>", lambda e: run_batch_comparison())
+    root.bind("<Control-o>", lambda e: open_report())
+    root.bind("<Control-s>", lambda e: save_report())
+    root.bind("<Control-comma>", lambda e: show_settings())
+    root.bind("<Control-c>", lambda e: copy_results())
+    root.bind("<Control-Delete>", lambda e: clear_all())
+    root.bind("<F1>", lambda e: show_documentation())
 
     # Set the window icon
     try:
@@ -768,11 +1320,40 @@ if __name__ == "__main__":
         pass
 
     # Add title text with Roboto font
-    title_label = tk.Label(frame, text="VerbatimAI", font=("Roboto", 32, "bold"))
+    title_label = tk.Label(frame, text="Verbatim AI", font=("Roboto", 32, "bold"))
     title_label.pack(pady=(0, 20))
 
+    # Create drop target area if DND is available
+    if USE_DND:
+        drop_target = tk.Label(
+            frame,
+            text="Drag and drop DOCX files or folders here",
+            width=40,
+            height=5,
+            relief="solid",
+            borderwidth=2,
+            bg="#f0f0f0"
+        )
+        drop_target.pack(pady=10)
+        
+        # Register drop target
+        drop_target.drop_target_register(tkdnd.DND_FILES)
+        drop_target.dnd_bind('<<Drop>>', handle_drop)
+    else:
+        # If DND is not available, show a message
+        no_dnd_label = tk.Label(
+            frame,
+            text="Drag and drop not available in this environment.\nPlease use the button below to select files.",
+            width=40,
+            height=5,
+            relief="solid",
+            borderwidth=2,
+            bg="#f0f0f0"
+        )
+        no_dnd_label.pack(pady=10)
+
     # Add the main button
-    button = tk.Button(frame, text="Start AutoCompare", command=run_batch_comparison)
+    button = tk.Button(frame, text="Upload Documents", command=run_batch_comparison)
     button.pack(pady=5)
 
     # Add progress bar

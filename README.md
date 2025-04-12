@@ -1,101 +1,58 @@
-# Document Webpage Comparer
+# Verbatim AI
 
-A Python-based tool for comparing draft Word documents against live webpages, with intelligent content alignment and visual comparison features.
+A powerful tool for comparing draft content with live website content.
 
 ## Features
 
-- **Manual URL Matching**: Allows users to manually match DOCX files with their corresponding webpage URLs
-- **Intelligent Content Comparison**: 
-  - Advanced content alignment using similarity matching
-  - Special handling of H1 headings to ensure proper content structure alignment
-  - Partial content matching for similar but not identical content
-  - Enhanced FAQ and structured content handling
-- **Visual Comparison Interface**:
-  - Side-by-side comparison view
-  - Color-coded content blocks:
-    - Green: Matched content
-    - Red: Content present in draft but missing from live
-    - Blue: Content present on live but not in draft
-  - Perfect visual alignment with invisible spacers
-- **Batch Processing**:
-  - Process multiple documents in one go
-  - Progress tracking with visual progress bar
-  - Summary report generation
-- **Multiple Output Formats**:
-  - HTML reports with interactive side-by-side view
-  - Markdown summary reports
-  - Individual HTML reports for each comparison
-  - Batch summary in both formats
+- Drag-and-drop interface for easy file handling
+- Batch processing of multiple DOCX files
+- Detailed HTML comparison reports
+- Markdown summary reports
+- Progress tracking and error handling
+- Modern, professional UI
 
-## Technical Features
+## Documentation
 
-- **Content Processing**:
-  - Intelligent heading detection and preservation
-  - Smart whitespace normalization
-  - HTML tag handling and cleaning
-  - Link text preservation
-  - Meta information extraction (title, description)
-  - Advanced structured content handling:
-    - UAGB FAQ blocks
-    - Generic FAQ sections
-    - Accordion components
-    - Expandable content sections
-    - ARIA-compliant interactive elements
-- **Comparison Algorithm**:
-  - Primary similarity threshold of 90%
-  - Secondary partial matching for similar content
-  - Special handling of document structure elements
-  - Intelligent block alignment based on H1 headings
-  - Improved duplicate detection and prevention
-
-## Requirements
-
-- Python 3.x
-- Required packages:
-  - python-docx
-  - beautifulsoup4
-  - requests
-  - tkinter (usually comes with Python)
+- [HTML Report Guide](docs/html_report_guide.md) - Detailed documentation about the HTML report structure and styling
 
 ## Usage
 
-1. Run the program using `python main.py`
-2. Click "Run Manual Match & Compare"
-3. Select the folder containing your DOCX files
-4. Match each DOCX file with its corresponding webpage URL
-5. Wait for the comparison to complete
-6. Review the generated reports:
-   - Individual HTML reports for each comparison
-   - Combined markdown report for the batch
-   - Summary in the application window
+1. Launch Verbatim AI
+2. Either:
+   - Drag and drop DOCX files or folders onto the application window
+   - Click "Start AutoCompare" and select a folder containing DOCX files
+3. Enter the corresponding URLs for each DOCX file
+4. Wait for the comparison to complete
+5. Review the generated reports in the selected folder
 
-## Output
+## Report Types
 
-The tool generates several types of output:
-- Individual HTML reports named `report_X_filename.html`
-- A combined markdown report named `comparison_report.md`
-- A summary displayed in the application window
+### HTML Reports
+- Individual HTML reports for each DOCX file
+- Side-by-side comparison of draft and live content
+- Color-coded differences
+- Similarity scores and visual indicators
+- Professional, modern design
 
-## Recent Updates
+### Markdown Report
+- Single markdown file summarizing all comparisons
+- Quick overview of similarity scores
+- Error reporting
+- Easy to read and share
 
-- Enhanced FAQ and structured content handling:
-  - Support for UAGB FAQ blocks
-  - Better detection of accordion sections
-  - Improved question-answer pairing
-  - Section heading preservation
-- Improved content alignment:
-  - Better H1 heading detection and alignment
-  - Enhanced visual spacing in comparison view
-  - Perfect vertical alignment between draft and live content
-  - Better handling of missing content with invisible spacers
-- Enhanced error handling:
-  - Robust web request handling
-  - Better malformed HTML handling
-  - Clear error messages in reports
-- Performance improvements:
-  - Better duplicate content detection
-  - Optimized content extraction
-  - Improved memory usage
+## Requirements
+
+- Windows 10 or later
+- Python 3.11 or later (if running from source)
+- Internet connection for live website comparison
+
+## Building from Source
+
+1. Clone the repository
+2. Install dependencies: `pip install -r requirements.txt`
+3. Run the build script: `python build.py`
+4. Find the executable in the `dist` folder
 
 ## License
-MIT License
+
+Copyright © 2024 SMB Team. All rights reserved.
