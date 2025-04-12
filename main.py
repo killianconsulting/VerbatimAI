@@ -9,6 +9,10 @@ from tkinter import filedialog, messagebox, scrolledtext, ttk
 import sys
 import webbrowser
 import shutil
+import urllib.parse
+from urllib.robotparser import RobotFileParser
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Try to import tkinterdnd2, fall back to regular tkinter if not available
 try:
@@ -23,7 +27,7 @@ def get_document_url_pairs(docx_files, parent_window):
     match_window = tk.Toplevel(parent_window)
     match_window.title("Match DOCX Files to URLs")
     window_width = 1200
-    window_height = 400
+    window_height = 500  # Increased height to accommodate new options
     
     # Calculate screen center
     screen_width = match_window.winfo_screenwidth()
@@ -45,21 +49,19 @@ def get_document_url_pairs(docx_files, parent_window):
     fg_color = '#ffffff' if is_dark_mode else '#000000'
     entry_bg = '#2d2d2d' if is_dark_mode else '#ffffff'
     button_bg = '#404040' if is_dark_mode else '#e0e0e0'
-    button_fg = '#ffffff' if is_dark_mode else '#000000'
+    button_fg = '#000000'  # Always black for better readability
     
     # Configure ttk styles for dark mode
     style = ttk.Style()
     if is_dark_mode:
-        # Entry style
         style.configure('url.TEntry', 
                        fieldbackground='#2d2d2d',
                        background='#2d2d2d',
-                       foreground='#ffffff',
+                       foreground='#000000',
                        insertcolor='#ffffff',
                        selectbackground='#404040',
                        selectforeground='#ffffff')
         
-        # Button style
         style.configure('url.TButton',
                        background='#404040',
                        foreground='#000000',
@@ -71,8 +73,20 @@ def get_document_url_pairs(docx_files, parent_window):
         style.map('url.TButton',
                  background=[('active', '#505050'), ('pressed', '#303030')],
                  foreground=[('active', '#000000'), ('pressed', '#000000')])
+
+        # Add styles for the URL matching window elements
+        style.configure('url.TLabel',
+                       background='#1e1e1e',
+                       foreground='#ffffff')
+        
+        style.configure('url.TFrame',
+                       background='#1e1e1e')
+        
+        style.configure('url.TRadiobutton',
+                       background='#1e1e1e',
+                       foreground='#ffffff',
+                       selectcolor='#404040')
     else:
-        # Light mode styles
         style.configure('url.TEntry',
                        fieldbackground='#ffffff',
                        background='#ffffff',
@@ -88,30 +102,76 @@ def get_document_url_pairs(docx_files, parent_window):
         style.map('url.TButton',
                  background=[('active', '#e0e0e0'), ('pressed', '#cccccc')],
                  foreground=[('active', '#000000'), ('pressed', '#000000')])
-    
-    # Apply colors to the window and its children
+
+        # Light mode styles for URL matching window
+        style.configure('url.TLabel',
+                       background='#f0f0f0',
+                       foreground='#000000')
+        
+        style.configure('url.TFrame',
+                       background='#f0f0f0')
+        
+        style.configure('url.TRadiobutton',
+                       background='#f0f0f0',
+                       foreground='#000000',
+                       selectcolor='#ffffff')
+
+    # Apply theme colors to the match window
     match_window.configure(bg=bg_color)
     
+    # Create main frame
+    main_frame = ttk.Frame(match_window, style='url.TFrame')
+    main_frame.pack(fill="both", expand=True, padx=10, pady=10)
+    
+    # Add mode selection
+    mode_frame = ttk.Frame(main_frame, style='url.TFrame')
+    mode_frame.pack(fill="x", pady=(0, 20))
+    
+    mode_var = tk.StringVar(value="manual")
+    
+    def on_mode_change():
+        if mode_var.get() == "auto":
+            base_url_frame.pack(fill="x", pady=5)
+            manual_frame.pack_forget()
+        else:
+            base_url_frame.pack_forget()
+            manual_frame.pack(fill="both", expand=True)
+    
+    # Add radio buttons with theme
+    ttk.Radiobutton(mode_frame, text="Manual URL Entry", variable=mode_var, value="manual", 
+                   command=on_mode_change, style='url.TRadiobutton').pack(side="left", padx=5)
+    ttk.Radiobutton(mode_frame, text="Automatic URL Matching", variable=mode_var, value="auto", 
+                   command=on_mode_change, style='url.TRadiobutton').pack(side="left", padx=5)
+    
+    # Base URL entry for automatic mode
+    base_url_frame = ttk.Frame(main_frame, style='url.TFrame')
+    base_url_label = ttk.Label(base_url_frame, text="Enter Base URL:", style='url.TLabel')
+    base_url_label.pack(side="left", padx=5)
+    base_url_entry = ttk.Entry(base_url_frame, width=100, style='url.TEntry')
+    base_url_entry.pack(side="left", fill="x", expand=True, padx=5)
+    
+    # Manual URL entry frame
+    manual_frame = ttk.Frame(main_frame, style='url.TFrame')
+    manual_frame.pack(fill="both", expand=True)
+    
     entries = []
-    canvas = tk.Canvas(match_window, bg=bg_color, highlightthickness=0)
-    scrollbar = tk.Scrollbar(match_window, orient="vertical", command=canvas.yview)
-    scroll_frame = tk.Frame(canvas, bg=bg_color)
+    canvas = tk.Canvas(manual_frame, bg=bg_color, highlightthickness=0)
+    scrollbar = tk.Scrollbar(manual_frame, orient="vertical", command=canvas.yview)
+    scroll_frame = ttk.Frame(canvas, style='url.TFrame')
 
     scroll_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
     canvas.create_window((0, 0), window=scroll_frame, anchor="nw")
     canvas.configure(yscrollcommand=scrollbar.set)
 
     # Add instructions with theme-aware colors
-    instructions = tk.Label(scroll_frame, 
-                          text="Enter the URL that matches each DOCX file.\nTip: You can paste multiple URLs at once!", 
-                          font=("Arial", 12, "bold"),
-                          justify=tk.CENTER,
-                          bg=bg_color,
-                          fg=fg_color)
+    instructions = ttk.Label(scroll_frame, 
+                           text="Enter the URL that matches each DOCX file.\nTip: You can paste multiple URLs at once!", 
+                           font=("Arial", 12, "bold"),
+                           style='url.TLabel')
     instructions.pack(pady=10)
 
     # Create a frame for the paste button
-    paste_frame = tk.Frame(scroll_frame, bg=bg_color)
+    paste_frame = ttk.Frame(scroll_frame, style='url.TFrame')
     paste_frame.pack(fill="x", padx=10, pady=5)
 
     def paste_urls():
@@ -135,19 +195,18 @@ def get_document_url_pairs(docx_files, parent_window):
     paste_btn.pack(side="right", padx=10)
 
     # Add tooltip for paste button with theme-aware colors
-    paste_tooltip = tk.Label(paste_frame, 
-                           text="Copy a list of URLs (one per line) and click here to auto-fill",
-                           foreground='#a0a0a0',
-                           bg=bg_color)
+    paste_tooltip = ttk.Label(paste_frame, 
+                            text="Copy a list of URLs (one per line) and click here to auto-fill",
+                            style='url.TLabel')
     paste_tooltip.pack(side="right", padx=5)
 
     # Create entry fields
     for file in docx_files:
-        frame = tk.Frame(scroll_frame, bg=bg_color)
+        frame = ttk.Frame(scroll_frame, style='url.TFrame')
         frame.pack(fill="x", padx=10, pady=5)
         
         # File label with fixed width and theme-aware colors
-        file_label = tk.Label(frame, text=file, width=80, anchor="w", bg=bg_color, fg=fg_color)
+        file_label = ttk.Label(frame, text=os.path.basename(file), width=80, anchor="w", style='url.TLabel')
         file_label.pack(side="left")
         
         # URL entry with theme-aware colors
@@ -160,24 +219,35 @@ def get_document_url_pairs(docx_files, parent_window):
         
         entries.append((file, url_entry))
 
+    canvas.pack(side="left", fill="both", expand=True)
+    scrollbar.pack(side="right", fill="y")
+    
     matched_pairs = []
 
     def submit():
         nonlocal matched_pairs
-        for filename, entry in entries:
-            url = entry.get().strip()
-            if not url:
-                messagebox.showerror("Missing URL", f"Please enter a URL for {filename}")
+        if mode_var.get() == "auto":
+            base_url = base_url_entry.get().strip()
+            if not base_url:
+                messagebox.showerror("Missing URL", "Please enter a base URL")
                 return
-            matched_pairs.append((filename, url))
-        match_window.grab_release()
-        match_window.destroy()
+            matches = auto_match_documents(docx_files, base_url, match_window)
+            if matches:
+                matched_pairs = matches
+                match_window.grab_release()
+                match_window.destroy()
+        else:
+            for filename, entry in entries:
+                url = entry.get().strip()
+                if not url:
+                    messagebox.showerror("Missing URL", f"Please enter a URL for {os.path.basename(filename)}")
+                    return
+                matched_pairs.append((filename, url))
+            match_window.grab_release()
+            match_window.destroy()
 
-    submit_btn = ttk.Button(scroll_frame, text="Start AutoCompare", command=submit, style='url.TButton')
+    submit_btn = ttk.Button(main_frame, text="Start AutoCompare", command=submit, style='url.TButton')
     submit_btn.pack(pady=20)
-
-    canvas.pack(side="left", fill="both", expand=True)
-    scrollbar.pack(side="right", fill="y")
     
     # Wait for window to be destroyed
     match_window.wait_window()
@@ -187,11 +257,46 @@ def get_document_url_pairs(docx_files, parent_window):
 
 def get_webpage_text(url):
     try:
+        # Configure session with proper settings
+        session = requests.Session()
+        session.verify = False  # Ignore SSL certificate verification
+        session.max_redirects = 5  # Allow up to 5 redirects
+        
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1',
+            'Cache-Control': 'max-age=0'
         }
-        response = requests.get(url, headers=headers, timeout=30)
-        response.raise_for_status()
+
+        # Suppress only the single InsecureRequestWarning from urllib3
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        
+        # First try HTTPS
+        try:
+            if not url.startswith(('http://', 'https://')):
+                url = 'https://' + url
+            response = session.get(url, headers=headers, timeout=30, allow_redirects=True)
+            response.raise_for_status()
+        except requests.exceptions.SSLError:
+            # If HTTPS fails, try HTTP
+            if url.startswith('https://'):
+                url = 'http://' + url[8:]
+            response = session.get(url, headers=headers, timeout=30, allow_redirects=True)
+            response.raise_for_status()
+        
+        # Check content type
+        content_type = response.headers.get('content-type', '').lower()
+        if 'text/html' not in content_type:
+            return f"[ERROR: Invalid content type: {content_type}]", "Untitled Page", ""
         
         soup = BeautifulSoup(response.text, "html.parser")
         
@@ -210,13 +315,19 @@ def get_webpage_text(url):
         content_containers = [
             soup.find("main"),
             soup.find("article"),
-            soup.find("div", {"class": ["content", "main-content", "page-content"]}),
+            soup.find(id=lambda x: x and any(word in str(x).lower() for word in ['content', 'main', 'article'])),
+            soup.find(class_=lambda x: x and any(word in str(x).lower() for word in ['content', 'main-content', 'page-content', 'article'])),
+            soup.find("div", {"class": ["content", "main-content", "page-content", "article-content"]}),
             soup.find("body")
         ]
         
         main = next((container for container in content_containers if container is not None), None)
         if not main:
             return "[ERROR: Could not find main content area]", title, meta_description
+        
+        # Remove unwanted elements
+        for element in main.find_all(['script', 'style', 'iframe', 'noscript', 'header', 'footer', 'nav']):
+            element.decompose()
         
         # Extract clean paragraphs while preserving structure
         paragraphs = []
@@ -359,6 +470,14 @@ def get_webpage_text(url):
         raw_text = "\n\n".join(paragraphs)
         return raw_text, title, meta_description
         
+    except requests.exceptions.SSLError as e:
+        return f"[ERROR: SSL Certificate verification failed: {str(e)}]", "Untitled Page", ""
+    except requests.exceptions.ConnectionError as e:
+        return f"[ERROR: Failed to connect to server: {str(e)}]", "Untitled Page", ""
+    except requests.exceptions.Timeout as e:
+        return f"[ERROR: Request timed out: {str(e)}]", "Untitled Page", ""
+    except requests.exceptions.TooManyRedirects as e:
+        return f"[ERROR: Too many redirects: {str(e)}]", "Untitled Page", ""
     except requests.exceptions.RequestException as e:
         return f"[ERROR: Failed to fetch webpage: {str(e)}]", "Untitled Page", ""
     except Exception as e:
@@ -817,18 +936,36 @@ def handle_drop(event):
     # Remove curly braces if present
     data = data.strip('{}')
     
-    # Split multiple files
-    paths = data.split('} {')
+    # Split multiple files and handle paths with spaces
+    paths = []
+    current_path = ""
+    in_quotes = False
+    
+    for char in data:
+        if char == '"':
+            in_quotes = not in_quotes
+        elif char == ' ' and not in_quotes:
+            if current_path:
+                paths.append(current_path)
+                current_path = ""
+        else:
+            current_path += char
+    
+    if current_path:
+        paths.append(current_path)
     
     # Collect all DOCX files
     docx_files = []
     for path in paths:
+        # Remove quotes if present
+        path = path.strip('"')
+        
         if os.path.isdir(path):
             # If it's a directory, find all DOCX files in it
             docx_files.extend([
                 os.path.join(path, f) 
                 for f in os.listdir(path) 
-                if f.endswith('.docx')
+                if f.lower().endswith('.docx')
             ])
         elif path.lower().endswith('.docx'):
             # If it's a DOCX file, add it directly
@@ -989,16 +1126,21 @@ def process_files(folder, specific_files=None):
     """Process the selected files for comparison"""
     # Get DOCX files based on selection method
     if specific_files:
-        docx_files = [os.path.basename(f) for f in specific_files]
-        # Store original file paths for processing
-        original_paths = {os.path.basename(f): f for f in specific_files}
+        # Store original file paths and use them directly
+        docx_files = specific_files
     else:
-        docx_files = sorted([f for f in os.listdir(folder) if f.endswith(".docx")])
-        original_paths = {f: os.path.join(folder, f) for f in docx_files}
+        # Get full paths for files in the folder
+        docx_files = [os.path.join(folder, f) for f in os.listdir(folder) if f.endswith('.docx')]
 
     if not docx_files:
         messagebox.showerror("Error", "No .docx files found in the selected location.")
         return
+
+    # Create a results folder
+    first_file_dir = os.path.dirname(docx_files[0])
+    results_folder = os.path.join(first_file_dir, "VerbatimAI_Results")
+    if not os.path.exists(results_folder):
+        os.makedirs(results_folder)
 
     # Create URL matching window
     matches = get_document_url_pairs(docx_files, root)
@@ -1018,31 +1160,30 @@ def process_files(folder, specific_files=None):
         
         for i, (docx_file, url) in enumerate(matches, start=1):
             try:
-                # Use original file path for processing
-                full_path = original_paths[docx_file]
-                draft_text = normalize_text(get_docx_text(full_path))
+                # Use the full path for processing
+                draft_text = normalize_text(get_docx_text(docx_file))
                 live_text, title, meta_desc = get_webpage_text(url)
                 live_text = normalize_text(live_text)
                 
                 if "[ERROR" in live_text:
-                    report_md += f"## {docx_file} vs {url}\n❌ {live_text}\n\n"
+                    report_md += f"## {os.path.basename(docx_file)} vs {url}\n❌ {live_text}\n\n"
                     summary.append(f"❌ {url}: Error")
                     continue
                 
                 diff, similarity = block_compare(draft_text, live_text)
                 
-                # Generate reports
-                html_report = format_result_as_html(docx_file, url, title, meta_desc, similarity, diff)
-                markdown_report = format_result_as_markdown(docx_file, url, title, meta_desc, similarity, diff)
+                # Generate reports using basename for display
+                html_report = format_result_as_html(os.path.basename(docx_file), url, title, meta_desc, similarity, diff)
+                markdown_report = format_result_as_markdown(os.path.basename(docx_file), url, title, meta_desc, similarity, diff)
 
                 # Save HTML report
-                html_file_path = os.path.join(folder, f"report_{i}_{os.path.splitext(docx_file)[0]}.html")
+                html_file_path = os.path.join(results_folder, f"report_{i}_{os.path.splitext(os.path.basename(docx_file))[0]}.html")
                 with open(html_file_path, "w", encoding="utf-8") as f:
                     f.write(f"""<!DOCTYPE html>
                     <html>
                     <head>
                         <meta charset='UTF-8'>
-                            <title>Verbatim AI - Comparison Report</title>
+                        <title>Verbatim AI - Comparison Report</title>
                         <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap" rel="stylesheet">
                         <style>
                             body {{ 
@@ -1088,14 +1229,14 @@ def process_files(folder, specific_files=None):
                 summary.append(f"{url} → Similarity: {similarity:.2%}")
 
             except Exception as e:
-                report_md += f"## {docx_file} vs {url}\n❌ Error: {str(e)}\n\n"
+                report_md += f"## {os.path.basename(docx_file)} vs {url}\n❌ Error: {str(e)}\n\n"
                 summary.append(f"❌ {url}: Error")
             
             progress_bar["value"] = i
             root.update_idletasks()
         
         # Save markdown report
-        md_path = os.path.join(folder, "comparison_report.md")
+        md_path = os.path.join(results_folder, "comparison_report.md")
         with open(md_path, "w", encoding="utf-8") as f:
             f.write(report_md)
         
@@ -1115,8 +1256,8 @@ def process_files(folder, specific_files=None):
         completion_window.grab_set()
         
         # Set size and position
-        window_width = 400
-        window_height = 200
+        window_width = 500
+        window_height = 250  # Increased height to accommodate buttons
         screen_width = completion_window.winfo_screenwidth()
         screen_height = completion_window.winfo_screenheight()
         x = (screen_width - window_width) // 2
@@ -1140,19 +1281,25 @@ def process_files(folder, specific_files=None):
             style.configure('Complete.TFrame', background='#1e1e1e')
             style.configure('Complete.TButton',
                           background='#404040',
-                          foreground='#000000',
+                          foreground='#000000',  # Changed to black
                           bordercolor='#505050',
-                          lightcolor='#404040')
+                          lightcolor='#404040',
+                          darkcolor='#2d2d2d',
+                          relief='raised',
+                          padding=(20, 10))
+            
             style.map('Complete.TButton',
                      background=[('active', '#505050'), ('pressed', '#303030')],
-                     foreground=[('active', '#000000'), ('pressed', '#000000')])
+                     foreground=[('active', '#000000'), ('pressed', '#000000')])  # Keep black on hover/press
         else:
             style.configure('Complete.TFrame', background='#f0f0f0')
             style.configure('Complete.TButton',
-                          background='#f0f0f0',
-                          foreground='#000000')
+                          background='#e0e0e0',
+                          foreground='#000000',
+                          padding=(20, 10))
+            
             style.map('Complete.TButton',
-                     background=[('active', '#e0e0e0'), ('pressed', '#cccccc')],
+                     background=[('active', '#d0d0d0'), ('pressed', '#c0c0c0')],
                      foreground=[('active', '#000000'), ('pressed', '#000000')])
 
         # Create main frame
@@ -1164,11 +1311,11 @@ def process_files(folder, specific_files=None):
         title_label = tk.Label(
             main_frame,
             text=title_text,
-            font=("Roboto", 14, "bold"),
+            font=("Roboto", 16, "bold"),
             bg=bg_color,
             fg=fg_color
         )
-        title_label.pack(pady=(0, 10))
+        title_label.pack(pady=(0, 20))
 
         # Add file paths
         path_text = f"Markdown saved to:\n{md_path}\n\nHTML reports saved in the same folder."
@@ -1178,41 +1325,44 @@ def process_files(folder, specific_files=None):
             justify=tk.LEFT,
             bg=bg_color,
             fg=fg_color,
-            wraplength=350
+            wraplength=450
         )
-        path_label.pack(pady=10)
+        path_label.pack(pady=(0, 30))
 
-        # Add buttons
+        # Add buttons frame
         button_frame = ttk.Frame(main_frame, style='Complete.TFrame')
-        button_frame.pack(fill='x', pady=(20, 0))
+        button_frame.pack(fill='x', pady=(10, 0))
 
         def open_folder():
-            os.startfile(folder)
-            completion_window.destroy()
+            os.startfile(results_folder)
 
-        def close_window():
-            completion_window.destroy()
+        # Create and pack buttons with equal width
+        button_frame.grid_columnconfigure(0, weight=1)
+        button_frame.grid_columnconfigure(1, weight=1)
 
         open_button = ttk.Button(
             button_frame,
-            text="Open Folder",
+            text="Open Results Folder",
             command=open_folder,
             style='Complete.TButton'
         )
-        open_button.pack(side='left', padx=5)
+        open_button.grid(row=0, column=0, padx=10, sticky='ew')
 
         close_button = ttk.Button(
             button_frame,
             text="Close",
-            command=close_window,
+            command=completion_window.destroy,
             style='Complete.TButton'
         )
-        close_button.pack(side='right', padx=5)
+        close_button.grid(row=0, column=1, padx=10, sticky='ew')
 
         # Center the window
         completion_window.update_idletasks()
         completion_window.geometry(f"+{x}+{y}")
         
+        # Bind Enter and Escape keys
+        completion_window.bind('<Return>', lambda e: open_folder())
+        completion_window.bind('<Escape>', lambda e: completion_window.destroy())
     except Exception as e:
         messagebox.showerror("Error", f"An error occurred during comparison: {str(e)}")
         progress_bar["value"] = 0
@@ -1405,6 +1555,26 @@ def apply_theme(is_dark_mode):
         if hasattr(root, 'logo_label'):
             root.logo_label.configure(bg='#1e1e1e')
         
+        # Update all themed entry widgets
+        style.configure('url.TEntry', 
+                       fieldbackground='#2d2d2d',
+                       foreground='#000000')  # Changed to black
+        
+        # Update button text colors
+        style.configure('TButton',
+                       foreground='#000000')  # Changed to black
+        style.configure('url.TButton',
+                       foreground='#000000')  # Changed to black
+        style.configure('Complete.TButton',
+                       foreground='#000000')  # Changed to black
+        
+        # Update button hover states
+        style.map('TButton',
+                 foreground=[('active', '#000000'), ('pressed', '#000000')])
+        style.map('url.TButton',
+                 foreground=[('active', '#000000'), ('pressed', '#000000')])
+        style.map('Complete.TButton',
+                 foreground=[('active', '#000000'), ('pressed', '#000000')])
     else:
         # Light mode colors
         root.configure(bg='#f0f0f0')
@@ -1656,6 +1826,317 @@ def show_about():
     
     # Add close button
     ttk.Button(about_window, text="Close", command=about_window.destroy).pack(pady=10)
+
+def crawl_website(base_url, max_pages=100):
+    """Crawl a website starting from base_url and extract URLs with their content"""
+    import urllib.parse
+    from urllib.robotparser import RobotFileParser
+    import time
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    
+    # Normalize base URL
+    base_url = base_url.rstrip('/')
+    base_domain = urllib.parse.urlparse(base_url).netloc
+    
+    # Initialize robot parser
+    robots_url = urllib.parse.urljoin(base_url, '/robots.txt')
+    rp = RobotFileParser()
+    rp.set_url(robots_url)
+    try:
+        rp.read()
+    except:
+        pass  # If robots.txt is not accessible, we'll proceed with crawling
+    
+    # Initialize variables
+    visited_urls = set()
+    urls_to_visit = {base_url}
+    page_contents = {}
+    
+    # Add delay between requests
+    request_delay = 0.5  # seconds
+    
+    # Headers for requests
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Connection': 'keep-alive',
+    }
+
+    def normalize_url(url):
+        """Normalize URL to avoid duplicates"""
+        parsed = urllib.parse.urlparse(url)
+        # Remove trailing slashes and default ports
+        normalized = parsed.scheme + '://' + parsed.netloc.rstrip(':80').rstrip(':443') + parsed.path.rstrip('/')
+        # Add query parameters if they exist
+        if parsed.query:
+            normalized += '?' + parsed.query
+        return normalized
+
+    def extract_links(soup, current_url):
+        """Extract all possible links from the page"""
+        links = set()
+        
+        # Find all elements that might contain links
+        for element in soup.find_all(['a', 'link', 'area', 'base', 'nav', 'menu']):
+            # Check href attribute
+            href = element.get('href')
+            if href:
+                try:
+                    absolute_url = urllib.parse.urljoin(current_url, href)
+                    parsed_url = urllib.parse.urlparse(absolute_url)
+                    
+                    # Only include URLs from the same domain and with http(s) scheme
+                    if (parsed_url.netloc == base_domain and 
+                        parsed_url.scheme in ('http', 'https') and
+                        not any(ext in parsed_url.path.lower() for ext in ['.jpg', '.jpeg', '.png', '.gif', '.pdf', '.doc', '.docx'])):
+                        
+                        normalized_url = normalize_url(absolute_url)
+                        links.add(normalized_url)
+                except:
+                    continue
+        
+        # Also look for links in navigation menus and other structures
+        for menu_item in soup.find_all(class_=lambda x: x and any(word in str(x).lower() for word in ['menu', 'nav', 'navigation'])):
+            for link in menu_item.find_all('a', href=True):
+                try:
+                    absolute_url = urllib.parse.urljoin(current_url, link['href'])
+                    if urllib.parse.urlparse(absolute_url).netloc == base_domain:
+                        normalized_url = normalize_url(absolute_url)
+                        links.add(normalized_url)
+                except:
+                    continue
+        
+        return links
+    
+    def fetch_url(url):
+        try:
+            time.sleep(request_delay)
+            response = requests.get(url, headers=headers, timeout=30)
+            response.raise_for_status()
+            
+            # Check if it's an HTML page
+            content_type = response.headers.get('content-type', '').lower()
+            if 'text/html' not in content_type:
+                return None
+            
+            content, title, meta_desc = get_webpage_text(url)
+            if "[ERROR" not in content:
+                # Extract links from the page
+                soup = BeautifulSoup(response.text, 'html.parser')
+                links = extract_links(soup, url)
+                
+                return url, {
+                    'content': content,
+                    'title': title,
+                    'meta_desc': meta_desc,
+                    'links': links
+                }
+        except Exception as e:
+            print(f"Error fetching {url}: {str(e)}")
+        return None
+    
+    # Use ThreadPoolExecutor for parallel crawling
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        while urls_to_visit and len(visited_urls) < max_pages:
+            # Get next batch of URLs to process
+            batch = set()
+            while urls_to_visit and len(batch) < 5:
+                url = urls_to_visit.pop()
+                normalized_url = normalize_url(url)
+                if normalized_url not in visited_urls and rp.can_fetch('*', url):
+                    batch.add(url)
+                    visited_urls.add(normalized_url)
+            
+            if not batch:
+                break
+            
+            # Process batch in parallel
+            future_to_url = {executor.submit(fetch_url, url): url for url in batch}
+            
+            for future in as_completed(future_to_url):
+                result = future.result()
+                if result:
+                    url, data = result
+                    normalized_url = normalize_url(url)
+                    page_contents[normalized_url] = data
+                    # Add new URLs to visit
+                    for new_url in data['links']:
+                        if normalize_url(new_url) not in visited_urls:
+                            urls_to_visit.add(new_url)
+    
+    return page_contents
+
+def auto_match_documents(docx_files, base_url, parent_window):
+    """Automatically match DOCX files to URLs based on content similarity"""
+    # Show progress window
+    progress_window = tk.Toplevel(parent_window)
+    progress_window.title("Matching Documents to URLs")
+    progress_window.geometry("500x200")
+    
+    # Center the window
+    window_width = 500
+    window_height = 200
+    screen_width = progress_window.winfo_screenwidth()
+    screen_height = progress_window.winfo_screenheight()
+    x = (screen_width - window_width) // 2
+    y = (screen_height - window_height) // 2
+    progress_window.geometry(f"{window_width}x{window_height}+{x}+{y}")
+    
+    # Make window modal
+    progress_window.transient(parent_window)
+    progress_window.grab_set()
+    
+    # Add progress label
+    progress_label = tk.Label(progress_window, text="Crawling website and matching documents...\nThis may take a few minutes.")
+    progress_label.pack(pady=20)
+    
+    # Add status label
+    status_label = tk.Label(progress_window, text="")
+    status_label.pack(pady=5)
+    
+    # Add progress bar
+    progress_bar = ttk.Progressbar(progress_window, orient="horizontal", length=400, mode="indeterminate")
+    progress_bar.pack(pady=10)
+    progress_bar.start()
+    
+    # Update the window
+    progress_window.update()
+    
+    try:
+        # Normalize base URL
+        if not base_url.startswith(('http://', 'https://')):
+            base_url = 'https://' + base_url
+        base_url = base_url.rstrip('/')
+        
+        # Update status
+        status_label.config(text="Crawling website...")
+        progress_window.update()
+        
+        # Crawl the website
+        page_contents = crawl_website(base_url)
+        
+        if not page_contents:
+            raise Exception("No pages found to crawl. Please check the URL and try again.")
+        
+        # Update status
+        status_label.config(text=f"Found {len(page_contents)} pages. Matching documents...")
+        progress_window.update()
+
+        def get_url_path_similarity(url, docx_name):
+            """Calculate similarity between URL path and document name"""
+            # Extract the path part of the URL
+            path = urllib.parse.urlparse(url).path.strip('/')
+            # Convert both to lowercase and remove common words and extensions
+            path_parts = set(re.sub(r'\.(html?|php|aspx?)?$', '', path.lower()).split('-'))
+            doc_parts = set(re.sub(r'\.docx$', '', os.path.basename(docx_name).lower()).split('-'))
+            # Calculate Jaccard similarity
+            if not path_parts or not doc_parts:
+                return 0
+            return len(path_parts & doc_parts) / len(path_parts | doc_parts)
+
+        def get_content_similarity(doc_text, page_text):
+            """Calculate multiple similarity metrics between document and page content"""
+            # Convert to lowercase for comparison
+            doc_text = doc_text.lower()
+            page_text = page_text.lower()
+            
+            # Sequence similarity (difflib)
+            sequence_sim = difflib.SequenceMatcher(None, doc_text, page_text).ratio()
+            
+            # Word overlap similarity
+            doc_words = set(re.findall(r'\b\w+\b', doc_text))
+            page_words = set(re.findall(r'\b\w+\b', page_text))
+            word_sim = len(doc_words & page_words) / max(len(doc_words), len(page_words)) if doc_words and page_words else 0
+            
+            # Heading similarity - extract and compare headings
+            doc_headings = set(re.findall(r'<h[1-6]>(.*?)</h[1-6]>', doc_text))
+            page_headings = set(re.findall(r'<h[1-6]>(.*?)</h[1-6]>', page_text))
+            heading_sim = len(doc_headings & page_headings) / max(len(doc_headings), len(page_headings)) if doc_headings and page_headings else 0
+            
+            # Paragraph similarity - compare first few paragraphs
+            doc_paras = doc_text.split('\n\n')[:3]
+            page_paras = page_text.split('\n\n')[:3]
+            para_sims = []
+            for dp in doc_paras:
+                para_sim = max((difflib.SequenceMatcher(None, dp, pp).ratio() for pp in page_paras), default=0)
+                para_sims.append(para_sim)
+            para_sim = sum(para_sims) / len(para_sims) if para_sims else 0
+            
+            # Combine similarities with weights
+            weights = {
+                'sequence': 0.3,
+                'word': 0.2,
+                'heading': 0.3,
+                'paragraph': 0.2
+            }
+            
+            return (sequence_sim * weights['sequence'] +
+                   word_sim * weights['word'] +
+                   heading_sim * weights['heading'] +
+                   para_sim * weights['paragraph'])
+
+        # Process each DOCX file
+        matches = []
+        for docx_file in docx_files:
+            try:
+                # Extract text from DOCX
+                docx_text = normalize_text(get_docx_text(docx_file))
+                docx_name = os.path.basename(docx_file)
+                
+                # Find best matching URL using multiple metrics
+                best_match = None
+                best_similarity = 0
+                best_url_sim = 0
+                
+                for url, content in page_contents.items():
+                    # Calculate URL path similarity
+                    url_sim = get_url_path_similarity(url, docx_name)
+                    
+                    # Calculate content similarity
+                    content_sim = get_content_similarity(docx_text, content['content'])
+                    
+                    # Combine similarities with weights
+                    # Give more weight to URL similarity if it's high
+                    if url_sim > 0.8:  # High URL match
+                        combined_sim = url_sim * 0.7 + content_sim * 0.3
+                    else:
+                        combined_sim = url_sim * 0.3 + content_sim * 0.7
+                    
+                    if combined_sim > best_similarity:
+                        best_similarity = combined_sim
+                        best_match = url
+                        best_url_sim = url_sim
+                
+                if best_match:
+                    status_label.config(text=f"Matched: {os.path.basename(docx_file)}\nSimilarity: {best_similarity:.2%}")
+                    progress_window.update()
+                    
+                    # If we have a very high URL similarity, accept a lower content similarity threshold
+                    if best_url_sim > 0.8 or best_similarity > 0.3:  # Lowered threshold but with more sophisticated matching
+                        matches.append((docx_file, best_match))
+                    else:
+                        raise Exception(f"No confident match found (best similarity: {best_similarity:.2%})")
+                else:
+                    raise Exception("No matching content found")
+                    
+            except Exception as e:
+                progress_window.destroy()
+                messagebox.showerror("Error", f"Failed to match document {os.path.basename(docx_file)}: {str(e)}")
+                return None
+        
+        if not matches:
+            progress_window.destroy()
+            messagebox.showerror("Error", "No matches found for any documents.")
+            return None
+            
+        progress_window.destroy()
+        return matches
+        
+    except Exception as e:
+        progress_window.destroy()
+        messagebox.showerror("Error", f"Failed to match documents: {str(e)}")
+        return None
 
 if __name__ == "__main__":
     # Use tkdnd.Tk if available, otherwise use regular tk.Tk
