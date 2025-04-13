@@ -2009,7 +2009,7 @@ def handle_unmatched_document(parent_window, docx_file, potential_matches=None):
     """Handle a document that couldn't be automatically matched"""
     dialog = tk.Toplevel(parent_window)
     dialog.title("Document Match Not Found")
-    dialog.geometry("600x400")
+    dialog.geometry("600x500")  # Increased height from 400 to 500
     
     # Make dialog modal
     dialog.transient(parent_window)
@@ -2023,18 +2023,53 @@ def handle_unmatched_document(parent_window, docx_file, potential_matches=None):
     y = (dialog.winfo_screenheight() // 2) - (height // 2)
     dialog.geometry(f'+{x}+{y}')
     
+    # Check if dark mode is enabled
+    current_settings = load_settings()
+    is_dark_mode = current_settings.get('dark_mode', 'false').lower() == 'true'
+    
+    # Configure styles for dark mode
+    style = ttk.Style()
+    if is_dark_mode:
+        dialog.configure(bg='#1e1e1e')
+        style.configure('Dialog.TFrame', background='#1e1e1e')
+        style.configure('Dialog.TLabel', background='#1e1e1e', foreground='#ffffff')
+        style.configure('Dialog.TLabelframe', background='#1e1e1e', foreground='#ffffff')
+        style.configure('Dialog.TLabelframe.Label', background='#1e1e1e', foreground='#ffffff')
+        style.configure('Dialog.TRadiobutton', background='#1e1e1e', foreground='#ffffff')
+        style.configure('Dialog.TEntry', 
+                       fieldbackground='#2d2d2d',
+                       foreground='#000000',  # Keep text black for readability
+                       insertcolor='#ffffff')
+        style.configure('Dialog.TButton',
+                       background='#404040',
+                       foreground='#000000')  # Keep button text black
+    else:
+        style.configure('Dialog.TFrame', background='#f0f0f0')
+        style.configure('Dialog.TLabel', background='#f0f0f0', foreground='#000000')
+        style.configure('Dialog.TLabelframe', background='#f0f0f0', foreground='#000000')
+        style.configure('Dialog.TLabelframe.Label', background='#f0f0f0', foreground='#000000')
+        style.configure('Dialog.TRadiobutton', background='#f0f0f0', foreground='#000000')
+        style.configure('Dialog.TEntry', 
+                       fieldbackground='#ffffff',
+                       foreground='#000000',
+                       insertcolor='#000000')
+        style.configure('Dialog.TButton',
+                       background='#e0e0e0',
+                       foreground='#000000')
+    
     # Configure grid
     dialog.grid_columnconfigure(0, weight=1)
     
     # Add warning icon and message
-    frame = ttk.Frame(dialog)
+    frame = ttk.Frame(dialog, style='Dialog.TFrame')
     frame.grid(row=0, column=0, padx=20, pady=10, sticky='nsew')
     
     warning_label = ttk.Label(
         frame,
         text=f"⚠️ Could not automatically match:\n{os.path.basename(docx_file)}",
         font=("Roboto", 11, "bold"),
-        wraplength=500
+        wraplength=500,
+        style='Dialog.TLabel'
     )
     warning_label.pack(pady=(0, 10))
     
@@ -2042,13 +2077,15 @@ def handle_unmatched_document(parent_window, docx_file, potential_matches=None):
     result = {"action": None, "url": None}
     
     if potential_matches:
-        matches_frame = ttk.LabelFrame(frame, text="Potential Matches", padding=10)
+        matches_frame = ttk.LabelFrame(frame, text="Potential Matches", padding=10, style='Dialog.TLabelframe')
         matches_frame.pack(fill='x', pady=10)
         
         # Create scrollable frame for matches
-        canvas = tk.Canvas(matches_frame, height=150)
+        canvas = tk.Canvas(matches_frame, height=150, 
+                         bg='#1e1e1e' if is_dark_mode else '#f0f0f0',
+                         highlightthickness=0)
         scrollbar = ttk.Scrollbar(matches_frame, orient="vertical", command=canvas.yview)
-        scrollable_frame = ttk.Frame(canvas)
+        scrollable_frame = ttk.Frame(canvas, style='Dialog.TFrame')
         
         scrollable_frame.bind(
             "<Configure>",
@@ -2061,19 +2098,24 @@ def handle_unmatched_document(parent_window, docx_file, potential_matches=None):
         # Add matches with radio buttons
         selected_match = tk.StringVar()
         for url, similarity in potential_matches:
-            match_frame = ttk.Frame(scrollable_frame)
+            match_frame = ttk.Frame(scrollable_frame, style='Dialog.TFrame')
             match_frame.pack(fill='x', pady=2)
             
             rb = ttk.Radiobutton(
                 match_frame,
                 text=f"{url}\nSimilarity: {similarity:.2%}",
                 value=url,
-                variable=selected_match
+                variable=selected_match,
+                style='Dialog.TRadiobutton'
             )
             rb.pack(fill='x')
         
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
+        
+        # Create a separate frame for the Use Selected Match button
+        button_frame = ttk.Frame(frame, style='Dialog.TFrame')
+        button_frame.pack(fill='x', pady=5)
         
         def use_selected_match():
             if selected_match.get():
@@ -2082,16 +2124,17 @@ def handle_unmatched_document(parent_window, docx_file, potential_matches=None):
                 dialog.destroy()
         
         ttk.Button(
-            matches_frame,
+            button_frame,
             text="Use Selected Match",
-            command=use_selected_match
-        ).pack(pady=10)
+            command=use_selected_match,
+            style='Dialog.TButton'
+        ).pack(side='right', padx=5)
     
     # Add manual URL entry section
-    manual_frame = ttk.LabelFrame(frame, text="Enter URL Manually", padding=10)
+    manual_frame = ttk.LabelFrame(frame, text="Enter URL Manually", padding=10, style='Dialog.TLabelframe')
     manual_frame.pack(fill='x', pady=10)
     
-    url_entry = ttk.Entry(manual_frame, width=50)
+    url_entry = ttk.Entry(manual_frame, width=50, style='Dialog.TEntry')
     url_entry.pack(side='left', padx=5)
     
     def use_manual_url():
@@ -2103,23 +2146,68 @@ def handle_unmatched_document(parent_window, docx_file, potential_matches=None):
     ttk.Button(
         manual_frame,
         text="Use This URL",
-        command=use_manual_url
+        command=use_manual_url,
+        style='Dialog.TButton'
     ).pack(side='left', padx=5)
     
-    # Add skip button
+    # Add skip button at the bottom
+    skip_frame = ttk.Frame(frame, style='Dialog.TFrame')
+    skip_frame.pack(fill='x', pady=10)
+    
     def skip_document():
         result["action"] = "skip"
         dialog.destroy()
     
     ttk.Button(
-        frame,
+        skip_frame,
         text="Skip This Document",
-        command=skip_document
-    ).pack(pady=10)
+        command=skip_document,
+        style='Dialog.TButton'
+    ).pack(side='right', padx=5)
     
     # Wait for dialog to close
     dialog.wait_window()
     return result["action"], result["url"]
+
+def get_content_similarity(text1, text2):
+    """Calculate content similarity between two texts using sequence matcher"""
+    # Normalize both texts
+    text1 = normalize_text(text1)
+    text2 = normalize_text(text2)
+    
+    # Use SequenceMatcher for similarity
+    return difflib.SequenceMatcher(None, text1, text2).ratio()
+
+def get_url_path_similarity(url, docx_path):
+    """Calculate similarity between URL path and document name"""
+    # Extract the path part from URL
+    url_path = urllib.parse.urlparse(url).path.strip('/')
+    
+    # Get document name without extension
+    doc_name = os.path.splitext(os.path.basename(docx_path))[0]
+    
+    # Convert both to lowercase and replace special characters with spaces
+    url_path = re.sub(r'[-_/]', ' ', url_path.lower())
+    doc_name = re.sub(r'[-_]', ' ', doc_name.lower())
+    
+    # Calculate similarity
+    return difflib.SequenceMatcher(None, url_path, doc_name).ratio()
+
+def toggle_theme(mode):
+    """Toggle between light and dark mode"""
+    current_settings = load_settings()
+    is_dark_mode = mode == "dark"
+    
+    # Apply the theme
+    apply_theme(is_dark_mode)
+    
+    # Update menu checkmarks
+    view_menu.entryconfigure("Light Mode", state="normal" if is_dark_mode else "disabled")
+    view_menu.entryconfigure("Dark Mode", state="disabled" if is_dark_mode else "normal")
+    
+    # Save the setting
+    current_settings['dark_mode'] = str(is_dark_mode).lower()
+    save_settings(current_settings)
 
 def auto_match_documents(docx_files, base_url, parent_window):
     """Automatically match DOCX files to URLs based on content similarity"""
@@ -2127,6 +2215,28 @@ def auto_match_documents(docx_files, base_url, parent_window):
     progress_window = tk.Toplevel(parent_window)
     progress_window.title("Matching Documents to URLs")
     progress_window.geometry("500x200")
+    
+    # Check if dark mode is enabled
+    current_settings = load_settings()
+    is_dark_mode = current_settings.get('dark_mode', 'false').lower() == 'true'
+    
+    # Apply theme colors
+    bg_color = '#1e1e1e' if is_dark_mode else '#f0f0f0'
+    fg_color = '#ffffff' if is_dark_mode else '#000000'
+    
+    # Configure window colors
+    progress_window.configure(bg=bg_color)
+    
+    # Configure styles
+    style = ttk.Style()
+    
+    # Create a custom style for the progress bar
+    style.configure('Custom.Horizontal.TProgressbar',
+                   troughcolor='#2d2d2d' if is_dark_mode else '#e0e0e0',
+                   background='#404040' if is_dark_mode else '#0078d7',
+                   darkcolor='#404040' if is_dark_mode else '#0078d7',
+                   lightcolor='#404040' if is_dark_mode else '#0078d7',
+                   bordercolor='#2d2d2d' if is_dark_mode else '#e0e0e0')
     
     # Center the window
     window_width = 500
@@ -2141,16 +2251,32 @@ def auto_match_documents(docx_files, base_url, parent_window):
     progress_window.transient(parent_window)
     progress_window.grab_set()
     
-    # Add progress label
-    progress_label = tk.Label(progress_window, text="Crawling website and matching documents...\nThis may take a few minutes.")
+    # Add progress label with theme-aware styling
+    progress_label = tk.Label(
+        progress_window,
+        text="Crawling website and matching documents...\nThis may take a few minutes.",
+        bg=bg_color,
+        fg=fg_color
+    )
     progress_label.pack(pady=20)
     
-    # Add status label
-    status_label = tk.Label(progress_window, text="")
+    # Add status label with theme-aware styling
+    status_label = tk.Label(
+        progress_window,
+        text="",
+        bg=bg_color,
+        fg=fg_color
+    )
     status_label.pack(pady=5)
     
-    # Add progress bar
-    progress_bar = ttk.Progressbar(progress_window, orient="horizontal", length=400, mode="indeterminate")
+    # Add progress bar with theme-aware styling
+    progress_bar = ttk.Progressbar(
+        progress_window,
+        orient="horizontal",
+        length=400,
+        mode="indeterminate",
+        style='Custom.Horizontal.TProgressbar'
+    )
     progress_bar.pack(pady=10)
     progress_bar.start()
     
@@ -2275,8 +2401,19 @@ if __name__ == "__main__":
     view_menu = tk.Menu(menubar, tearoff=0)
     menubar.add_cascade(label="View", menu=view_menu)
     
-    # Add View menu items
-    view_menu.add_checkbutton(label="Dark Mode", command=toggle_dark_mode)
+    # Add View menu items - Light/Dark mode options
+    current_settings = load_settings()
+    is_dark_mode = current_settings.get('dark_mode', 'false').lower() == 'true'
+    view_menu.add_command(
+        label="Light Mode",
+        command=lambda: toggle_theme("light"),
+        state="normal" if is_dark_mode else "disabled"
+    )
+    view_menu.add_command(
+        label="Dark Mode",
+        command=lambda: toggle_theme("dark"),
+        state="disabled" if is_dark_mode else "normal"
+    )
 
     # Create Help menu
     help_menu = tk.Menu(menubar, tearoff=0)
