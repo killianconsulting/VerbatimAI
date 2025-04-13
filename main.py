@@ -27,7 +27,16 @@ def get_document_url_pairs(docx_files, parent_window):
     match_window = tk.Toplevel(parent_window)
     match_window.title("Match DOCX Files to URLs")
     window_width = 1200
-    window_height = 500  # Increased height to accommodate new options
+    
+    # Calculate initial height based on number of documents
+    base_height = 200  # Base height for controls and padding
+    entry_height = 30  # Height per entry
+    window_height = base_height + (len(docx_files) * entry_height)
+    # Ensure minimum height
+    window_height = max(window_height, 300)
+    # Ensure maximum height (80% of screen height)
+    max_height = int(parent_window.winfo_screenheight() * 0.8)
+    window_height = min(window_height, max_height)
     
     # Calculate screen center
     screen_width = match_window.winfo_screenwidth()
@@ -125,9 +134,9 @@ def get_document_url_pairs(docx_files, parent_window):
     
     # Add mode selection
     mode_frame = ttk.Frame(main_frame, style='url.TFrame')
-    mode_frame.pack(fill="x", pady=(0, 20))
+    mode_frame.pack(fill="x", pady=(0, 10))
     
-    mode_var = tk.StringVar(value="manual")
+    mode_var = tk.StringVar(value="auto")
     
     def on_mode_change():
         if mode_var.get() == "auto":
@@ -138,9 +147,9 @@ def get_document_url_pairs(docx_files, parent_window):
             manual_frame.pack(fill="both", expand=True)
     
     # Add radio buttons with theme
-    ttk.Radiobutton(mode_frame, text="Manual URL Entry", variable=mode_var, value="manual", 
-                   command=on_mode_change, style='url.TRadiobutton').pack(side="left", padx=5)
     ttk.Radiobutton(mode_frame, text="Automatic URL Matching", variable=mode_var, value="auto", 
+                   command=on_mode_change, style='url.TRadiobutton').pack(side="left", padx=5)
+    ttk.Radiobutton(mode_frame, text="Manual URL Entry", variable=mode_var, value="manual", 
                    command=on_mode_change, style='url.TRadiobutton').pack(side="left", padx=5)
     
     # Base URL entry for automatic mode
@@ -152,11 +161,14 @@ def get_document_url_pairs(docx_files, parent_window):
     
     # Manual URL entry frame
     manual_frame = ttk.Frame(main_frame, style='url.TFrame')
-    manual_frame.pack(fill="both", expand=True)
+    
+    # Create a container frame for the scrollable content
+    scroll_container = ttk.Frame(manual_frame, style='url.TFrame')
+    scroll_container.pack(fill="both", expand=True)
     
     entries = []
-    canvas = tk.Canvas(manual_frame, bg=bg_color, highlightthickness=0)
-    scrollbar = tk.Scrollbar(manual_frame, orient="vertical", command=canvas.yview)
+    canvas = tk.Canvas(scroll_container, bg=bg_color, highlightthickness=0)
+    scrollbar = tk.Scrollbar(scroll_container, orient="vertical", command=canvas.yview)
     scroll_frame = ttk.Frame(canvas, style='url.TFrame')
 
     scroll_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
@@ -168,7 +180,7 @@ def get_document_url_pairs(docx_files, parent_window):
                            text="Enter the URL that matches each DOCX file.\nTip: You can paste multiple URLs at once!", 
                            font=("Arial", 12, "bold"),
                            style='url.TLabel')
-    instructions.pack(pady=10)
+    instructions.pack(pady=5)
 
     # Create a frame for the paste button
     paste_frame = ttk.Frame(scroll_frame, style='url.TFrame')
@@ -203,7 +215,7 @@ def get_document_url_pairs(docx_files, parent_window):
     # Create entry fields
     for file in docx_files:
         frame = ttk.Frame(scroll_frame, style='url.TFrame')
-        frame.pack(fill="x", padx=10, pady=5)
+        frame.pack(fill="x", padx=10, pady=2)
         
         # File label with fixed width and theme-aware colors
         file_label = ttk.Label(frame, text=os.path.basename(file), width=80, anchor="w", style='url.TLabel')
@@ -246,8 +258,20 @@ def get_document_url_pairs(docx_files, parent_window):
             match_window.grab_release()
             match_window.destroy()
 
-    submit_btn = ttk.Button(main_frame, text="Start AutoCompare", command=submit, style='url.TButton')
-    submit_btn.pack(pady=20)
+    # Create button frame at the bottom
+    button_frame = ttk.Frame(main_frame, style='url.TFrame')
+    button_frame.pack(fill="x", side="bottom", pady=10)
+    
+    # Create submit button in button frame
+    submit_btn = ttk.Button(button_frame, text="Start AutoCompare", command=submit, style='url.TButton')
+    submit_btn.pack()
+    
+    # Bind Enter key to submit
+    match_window.bind('<Return>', lambda e: submit())
+    base_url_entry.bind('<Return>', lambda e: submit())
+    
+    # Initialize the correct mode display
+    on_mode_change()
     
     # Wait for window to be destroyed
     match_window.wait_window()
@@ -2153,8 +2177,6 @@ if __name__ == "__main__":
     
     # Add File menu items
     file_menu.add_command(label="New Comparison", command=run_batch_comparison, accelerator="Ctrl+N")
-    file_menu.add_command(label="Open Report", command=open_report, accelerator="Ctrl+O")
-    file_menu.add_command(label="Save Report", command=save_report, accelerator="Ctrl+S")
     file_menu.add_separator()
     file_menu.add_command(label="Settings", command=show_settings, accelerator="Ctrl+,")
     file_menu.add_separator()
@@ -2245,7 +2267,7 @@ if __name__ == "__main__":
         # If DND is not available, show a message
         no_dnd_label = tk.Label(
             frame,
-            text="Drag and drop not available in this environment.\nPlease use the button below to select files.",
+            text="Drag and drop not available in this environment.\nPlease use the buttons below to select files.",
             width=40,
             height=5,
             relief="solid",
@@ -2253,17 +2275,43 @@ if __name__ == "__main__":
         )
         no_dnd_label.pack(pady=10)
 
-    # Add the main button
-    button = tk.Button(frame, text="Upload Documents", command=run_batch_comparison)
-    button.pack(pady=5)
+    # Create button frame
+    button_frame = ttk.Frame(frame)
+    button_frame.pack(pady=5)
+
+    def select_folder_direct():
+        folder_path = filedialog.askdirectory(title="Select Folder Containing Draft DOCX Files")
+        if folder_path:
+            process_files(folder_path)
+
+    def select_files_direct():
+        files = filedialog.askopenfilenames(
+            title="Select DOCX Files",
+            filetypes=[("DOCX files", "*.docx"), ("All files", "*.*")]
+        )
+        if files:
+            # Create temporary folder for selected files
+            temp_folder = os.path.join(os.path.dirname(files[0]), "VerbatimAI_Results")
+            if not os.path.exists(temp_folder):
+                os.makedirs(temp_folder)
+            
+            # Process selected files
+            process_files(temp_folder, files)
+
+    # Add the action buttons
+    select_folder_btn = ttk.Button(button_frame, text="Select Folder", command=select_folder_direct)
+    select_folder_btn.pack(side="left", padx=5)
+    
+    select_files_btn = ttk.Button(button_frame, text="Select Files", command=select_files_direct)
+    select_files_btn.pack(side="left", padx=5)
 
     # Add progress bar
     progress_bar = ttk.Progressbar(frame, orient="horizontal", length=600, mode="determinate")
     progress_bar.pack(pady=5)
 
     # Add text area
-    text_area = scrolledtext.ScrolledText(root, wrap=tk.WORD, width=60, height=10)
-    text_area.pack(padx=10, pady=10)
+    text_area = scrolledtext.ScrolledText(root, wrap=tk.WORD, height=10)
+    text_area.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
 
     # Apply initial theme based on settings
     current_settings = load_settings()
