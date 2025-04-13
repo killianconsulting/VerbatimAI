@@ -154,7 +154,21 @@ def get_document_url_pairs(docx_files, parent_window):
     
     # Base URL entry for automatic mode
     base_url_frame = ttk.Frame(main_frame, style='url.TFrame')
-    base_url_label = ttk.Label(base_url_frame, text="Enter Base URL:", style='url.TLabel')
+    
+    # Add description for automatic mode
+    auto_description = ttk.Label(
+        base_url_frame,
+        text="Automatic URL Matching will crawl the website starting from the domain URL you provide. " +
+             "It will find and analyze all pages on the site, compare each document with the found pages, " +
+             "and automatically match your documents to their best corresponding URLs.",
+        font=("Arial", 12, "bold"),
+        style='url.TLabel',
+        justify='left',
+        wraplength=550
+    )
+    auto_description.pack(pady=5)
+    
+    base_url_label = ttk.Label(base_url_frame, text="Enter Domain:", style='url.TLabel')
     base_url_label.pack(side="left", padx=5)
     base_url_entry = ttk.Entry(base_url_frame, width=100, style='url.TEntry')
     base_url_entry.pack(side="left", fill="x", expand=True, padx=5)
@@ -208,7 +222,7 @@ def get_document_url_pairs(docx_files, parent_window):
 
     # Add tooltip for paste button with theme-aware colors
     paste_tooltip = ttk.Label(paste_frame, 
-                            text="Copy a list of URLs (one per line) and click here to auto-fill",
+                            text="Paste a list of URLs (one per line) or click here to auto-fill multiple copied urls",
                             style='url.TLabel')
     paste_tooltip.pack(side="right", padx=5)
 
@@ -1991,6 +2005,122 @@ def crawl_website(base_url, max_pages=100):
     
     return page_contents
 
+def handle_unmatched_document(parent_window, docx_file, potential_matches=None):
+    """Handle a document that couldn't be automatically matched"""
+    dialog = tk.Toplevel(parent_window)
+    dialog.title("Document Match Not Found")
+    dialog.geometry("600x400")
+    
+    # Make dialog modal
+    dialog.transient(parent_window)
+    dialog.grab_set()
+    
+    # Center the dialog
+    dialog.update_idletasks()
+    width = dialog.winfo_width()
+    height = dialog.winfo_height()
+    x = (dialog.winfo_screenwidth() // 2) - (width // 2)
+    y = (dialog.winfo_screenheight() // 2) - (height // 2)
+    dialog.geometry(f'+{x}+{y}')
+    
+    # Configure grid
+    dialog.grid_columnconfigure(0, weight=1)
+    
+    # Add warning icon and message
+    frame = ttk.Frame(dialog)
+    frame.grid(row=0, column=0, padx=20, pady=10, sticky='nsew')
+    
+    warning_label = ttk.Label(
+        frame,
+        text=f"⚠️ Could not automatically match:\n{os.path.basename(docx_file)}",
+        font=("Roboto", 11, "bold"),
+        wraplength=500
+    )
+    warning_label.pack(pady=(0, 10))
+    
+    # Add potential matches section if available
+    result = {"action": None, "url": None}
+    
+    if potential_matches:
+        matches_frame = ttk.LabelFrame(frame, text="Potential Matches", padding=10)
+        matches_frame.pack(fill='x', pady=10)
+        
+        # Create scrollable frame for matches
+        canvas = tk.Canvas(matches_frame, height=150)
+        scrollbar = ttk.Scrollbar(matches_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw", width=500)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # Add matches with radio buttons
+        selected_match = tk.StringVar()
+        for url, similarity in potential_matches:
+            match_frame = ttk.Frame(scrollable_frame)
+            match_frame.pack(fill='x', pady=2)
+            
+            rb = ttk.Radiobutton(
+                match_frame,
+                text=f"{url}\nSimilarity: {similarity:.2%}",
+                value=url,
+                variable=selected_match
+            )
+            rb.pack(fill='x')
+        
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        
+        def use_selected_match():
+            if selected_match.get():
+                result["action"] = "use_match"
+                result["url"] = selected_match.get()
+                dialog.destroy()
+        
+        ttk.Button(
+            matches_frame,
+            text="Use Selected Match",
+            command=use_selected_match
+        ).pack(pady=10)
+    
+    # Add manual URL entry section
+    manual_frame = ttk.LabelFrame(frame, text="Enter URL Manually", padding=10)
+    manual_frame.pack(fill='x', pady=10)
+    
+    url_entry = ttk.Entry(manual_frame, width=50)
+    url_entry.pack(side='left', padx=5)
+    
+    def use_manual_url():
+        if url_entry.get().strip():
+            result["action"] = "manual"
+            result["url"] = url_entry.get().strip()
+            dialog.destroy()
+    
+    ttk.Button(
+        manual_frame,
+        text="Use This URL",
+        command=use_manual_url
+    ).pack(side='left', padx=5)
+    
+    # Add skip button
+    def skip_document():
+        result["action"] = "skip"
+        dialog.destroy()
+    
+    ttk.Button(
+        frame,
+        text="Skip This Document",
+        command=skip_document
+    ).pack(pady=10)
+    
+    # Wait for dialog to close
+    dialog.wait_window()
+    return result["action"], result["url"]
+
 def auto_match_documents(docx_files, base_url, parent_window):
     """Automatically match DOCX files to URLs based on content similarity"""
     # Show progress window
@@ -2024,9 +2154,6 @@ def auto_match_documents(docx_files, base_url, parent_window):
     progress_bar.pack(pady=10)
     progress_bar.start()
     
-    # Update the window
-    progress_window.update()
-    
     try:
         # Normalize base URL
         if not base_url.startswith(('http://', 'https://')):
@@ -2046,114 +2173,67 @@ def auto_match_documents(docx_files, base_url, parent_window):
         # Update status
         status_label.config(text=f"Found {len(page_contents)} pages. Matching documents...")
         progress_window.update()
-
-        def get_url_path_similarity(url, docx_name):
-            """Calculate similarity between URL path and document name"""
-            # Extract the path part of the URL
-            path = urllib.parse.urlparse(url).path.strip('/')
-            # Convert both to lowercase and remove common words and extensions
-            path_parts = set(re.sub(r'\.(html?|php|aspx?)?$', '', path.lower()).split('-'))
-            doc_parts = set(re.sub(r'\.docx$', '', os.path.basename(docx_name).lower()).split('-'))
-            # Calculate Jaccard similarity
-            if not path_parts or not doc_parts:
-                return 0
-            return len(path_parts & doc_parts) / len(path_parts | doc_parts)
-
-        def get_content_similarity(doc_text, page_text):
-            """Calculate multiple similarity metrics between document and page content"""
-            # Convert to lowercase for comparison
-            doc_text = doc_text.lower()
-            page_text = page_text.lower()
-            
-            # Sequence similarity (difflib)
-            sequence_sim = difflib.SequenceMatcher(None, doc_text, page_text).ratio()
-            
-            # Word overlap similarity
-            doc_words = set(re.findall(r'\b\w+\b', doc_text))
-            page_words = set(re.findall(r'\b\w+\b', page_text))
-            word_sim = len(doc_words & page_words) / max(len(doc_words), len(page_words)) if doc_words and page_words else 0
-            
-            # Heading similarity - extract and compare headings
-            doc_headings = set(re.findall(r'<h[1-6]>(.*?)</h[1-6]>', doc_text))
-            page_headings = set(re.findall(r'<h[1-6]>(.*?)</h[1-6]>', page_text))
-            heading_sim = len(doc_headings & page_headings) / max(len(doc_headings), len(page_headings)) if doc_headings and page_headings else 0
-            
-            # Paragraph similarity - compare first few paragraphs
-            doc_paras = doc_text.split('\n\n')[:3]
-            page_paras = page_text.split('\n\n')[:3]
-            para_sims = []
-            for dp in doc_paras:
-                para_sim = max((difflib.SequenceMatcher(None, dp, pp).ratio() for pp in page_paras), default=0)
-                para_sims.append(para_sim)
-            para_sim = sum(para_sims) / len(para_sims) if para_sims else 0
-            
-            # Combine similarities with weights
-            weights = {
-                'sequence': 0.3,
-                'word': 0.2,
-                'heading': 0.3,
-                'paragraph': 0.2
-            }
-            
-            return (sequence_sim * weights['sequence'] +
-                   word_sim * weights['word'] +
-                   heading_sim * weights['heading'] +
-                   para_sim * weights['paragraph'])
-
+        
         # Process each DOCX file
         matches = []
         for docx_file in docx_files:
             try:
                 # Extract text from DOCX
                 docx_text = normalize_text(get_docx_text(docx_file))
-                docx_name = os.path.basename(docx_file)
                 
-                # Find best matching URL using multiple metrics
-                best_match = None
-                best_similarity = 0
-                best_url_sim = 0
-                
+                # Find potential matches
+                potential_matches = []
                 for url, content in page_contents.items():
-                    # Calculate URL path similarity
-                    url_sim = get_url_path_similarity(url, docx_name)
-                    
-                    # Calculate content similarity
                     content_sim = get_content_similarity(docx_text, content['content'])
+                    url_sim = get_url_path_similarity(url, docx_file)
                     
-                    # Combine similarities with weights
-                    # Give more weight to URL similarity if it's high
+                    # Calculate combined similarity
                     if url_sim > 0.8:  # High URL match
                         combined_sim = url_sim * 0.7 + content_sim * 0.3
                     else:
                         combined_sim = url_sim * 0.3 + content_sim * 0.7
                     
-                    if combined_sim > best_similarity:
-                        best_similarity = combined_sim
-                        best_match = url
-                        best_url_sim = url_sim
+                    potential_matches.append((url, combined_sim))
                 
-                if best_match:
-                    status_label.config(text=f"Matched: {os.path.basename(docx_file)}\nSimilarity: {best_similarity:.2%}")
-                    progress_window.update()
-                    
-                    # If we have a very high URL similarity, accept a lower content similarity threshold
-                    if best_url_sim > 0.8 or best_similarity > 0.3:  # Lowered threshold but with more sophisticated matching
-                        matches.append((docx_file, best_match))
-                    else:
-                        raise Exception(f"No confident match found (best similarity: {best_similarity:.2%})")
+                # Sort matches by similarity
+                potential_matches.sort(key=lambda x: x[1], reverse=True)
+                
+                # Check if we have a confident match
+                if potential_matches and potential_matches[0][1] > 0.3:
+                    matches.append((docx_file, potential_matches[0][0]))
+                    status_label.config(text=f"Matched: {os.path.basename(docx_file)}")
                 else:
-                    raise Exception("No matching content found")
+                    # Hide progress window temporarily
+                    progress_window.withdraw()
                     
+                    # Show unmatched document dialog
+                    action, url = handle_unmatched_document(
+                        parent_window,
+                        docx_file,
+                        potential_matches[:5] if potential_matches else None  # Show top 5 matches
+                    )
+                    
+                    # Show progress window again
+                    progress_window.deiconify()
+                    
+                    if action == "use_match" or action == "manual":
+                        matches.append((docx_file, url))
+                        status_label.config(text=f"Matched: {os.path.basename(docx_file)} (Manual/Selected)")
+                    elif action == "skip":
+                        status_label.config(text=f"Skipped: {os.path.basename(docx_file)}")
+                
+                progress_window.update()
+                
             except Exception as e:
                 progress_window.destroy()
-                messagebox.showerror("Error", f"Failed to match document {os.path.basename(docx_file)}: {str(e)}")
+                messagebox.showerror("Error", f"Error processing {os.path.basename(docx_file)}: {str(e)}")
                 return None
         
         if not matches:
             progress_window.destroy()
             messagebox.showerror("Error", "No matches found for any documents.")
             return None
-            
+        
         progress_window.destroy()
         return matches
         

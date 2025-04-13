@@ -1,0 +1,3 @@
+default_save_location=C:\Users\baile\Downloads
+similarity_threshold=0.9
+dark_mode=true
